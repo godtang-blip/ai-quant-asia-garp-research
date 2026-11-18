@@ -1,0 +1,29 @@
+ticker,company,market,peer_group,industry_thesis
+2330.TW,TSMC,Taiwan,chip_manufacturing,Leading advanced foundry nodes and AI demand
+2303.TW,UMC,Taiwan,chip_manufacturing,Specialty and mature-node chip demand
+0981.HK,SMIC,Hong Kong,chip_manufacturing,China local semiconductor manufacturing
+005930.KS,Samsung Electronics,Korea,chip_manufacturing,Advanced logic and memory supply chain
+000990.KS,DB HiTek,Korea,chip_manufacturing,Specialty foundry business
+8035.T,Tokyo Electron,Japan,chip_equipment,Wafer fabrication equipment
+6146.T,DISCO,Japan,chip_equipment,Cutting grinding and advanced packaging
+6857.T,Advantest,Japan,chip_equipment,Semiconductor test equipment
+042700.KS,Hanmi Semiconductor,Korea,chip_equipment,HBM and packaging equipment
+002371.SZ,NAURA Technology,China,chip_equipment,Domestic semiconductor equipment
+000660.KS,SK Hynix,Korea,chip_components,High bandwidth memory demand
+2454.TW,MediaTek,Taiwan,chip_components,Mobile SoC and edge compute
+3711.TW,ASE Technology Holding,Taiwan,chip_components,Packaging and testing
+009150.KS,Samsung Electro-Mechanics,Korea,chip_components,Electronic components and substrates
+2308.TW,Delta Electronics,Taiwan,chip_components,AI power supplies and cooling
+0700.HK,Tencent,Hong Kong,platforms,Digital consumer platform and cloud
+9988.HK,Alibaba Group,Hong Kong,platforms,Cloud commerce and AI investment
+035420.KS,NAVER,Korea,platforms,Search platform and commerce
+035720.KS,Kakao,Korea,platforms,Korean digital platform
+6501.T,Hitachi,Japan,industrial_electrification,Power infrastructure digital industries
+6503.T,Mitsubishi Electric,Japan,industrial_electrification,Industrial automation and power equipment
+010120.KS,LS ELECTRIC,Korea,industrial_electrification,Grid equipment and electrical systems
+267260.KS,HD Hyundai Electric,Korea,industrial_electrification,Transformers and grid expansion
+6506.T,Yaskawa Electric,Japan,industrial_electrification,Motion control and robotics
+005380.KS,Hyundai Motor,Korea,automakers,Vehicle platforms and profitability
+7203.T,Toyota Motor,Japan,automakers,Global scale and hybrid mix
+7267.T,Honda Motor,Japan,automakers,Vehicle operations and capital allocation
+000270.KS,Kia,Korea,automakers,Vehicle mix and margins

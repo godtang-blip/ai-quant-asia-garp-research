@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+outputs/
+.env
+.secrets*
+.ipynb_checkpoints/
