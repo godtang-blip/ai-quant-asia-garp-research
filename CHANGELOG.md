@@ -1,3 +1,10 @@
+## 0.5.0 — 2026-11-18 — integrated three-stage research quality gates
+- Added optional JPX XLSX, TWSE open data, KRX authenticated issuer listing adapters with provenance; vendor regional screeners remain and no full-census claims.
+- Added manual primary-financial reconciliation, strict same-period/source/reviewer/2% gates, and company-level stage reports.
+- Added 3-scenario FCFF DCF with explicit manually supplied assumptions, bear case, catalyst, falsification trigger, analyst acceptance gate.
+- Added v0.5 GitHub workflow (manual one-click), 30..37 audit artifacts, regression tests and a full Korean quick start.
+- Applied gates to archived v0.31 live-result dataset: 684 analyzed, 94 screened, 0 evidence checked, 0 memo ready. This is a truthful baseline, NOT improved stock selection accuracy.
+
 # Release and investigation log
 
 ## v0.3.1 (implementation release, live integration still unverified)

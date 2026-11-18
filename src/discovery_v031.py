@@ -5,8 +5,10 @@ vendor-curated, can omit stocks, and can return wrong security types; audit that
 """
 from __future__ import annotations
 import re
+import os
 import pandas as pd
 from .discovery import source_nikkei225
+from .official_universe import source_jpx_list, source_twse_list, source_krx_list, previous_weekday
 
 REGIONS = {'Korea': ('kr', (r'^\d{6}\.KS$', r'^\d{6}\.KQ$')),
            'Japan': ('jp', (r'^\d{4}\.T$',)),
@@ -54,18 +56,29 @@ def source_region(market:str, max_rows:int=100, page_size:int=50)->tuple[list[di
 
 
 def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)->tuple[pd.DataFrame,pd.DataFrame]:
-    if mode not in ('off','all5','regional5','nikkei'):
-        raise ValueError('discover_mode must be off, all5, regional5, nikkei')
+    if mode not in ('off','all5','regional5','nikkei','all5_official'):
+        raise ValueError('discover_mode must be off, all5, regional5, nikkei, all5_official')
     result=base.copy().fillna('');result['is_new_discovery']=False
     result['discovery_source']='CURATED_LIST'
     result['security_type_status']='CURATED_TICKER_TYPE_NEEDS_CONFIRMATION'
     logs=[]; candidates=[]
     sources=[]
-    if mode in ('all5','nikkei'):
+    if mode in ('all5','nikkei','all5_official'):
         sources.append(('official_nikkei225',lambda: (source_nikkei225(),{'market':'Japan','pages':1,'rejected_non_equity':0,'rejected_bad_symbol':0})))
-    if mode in ('all5','regional5'):
+    if mode == 'all5_official':
+        if os.environ.get('PUBLIC_DATA_API_KEY'):
+            sources.append(('official_krx_listed_issues',lambda: (source_krx_list(
+                os.environ['PUBLIC_DATA_API_KEY'],os.environ.get('KRX_BASE_DATE') or previous_weekday()),
+                {'market':'Korea','pages':1})))
+        sources.append(('official_jpx_full_listing',lambda: (source_jpx_list(),{'market':'Japan','pages':1})))
+        sources.append(('official_twse_listed_companies',lambda: (source_twse_list(),{'market':'Taiwan','pages':1})))
+    if mode in ('all5','regional5','all5_official'):
         for market in REGIONS:
             sources.append((f'yahoo_screener_{market}',lambda market=market:source_region(market,per_region)))
+    if mode == 'all5_official' and not os.environ.get('PUBLIC_DATA_API_KEY'):
+        logs.append({'source':'official_krx_listed_issues','status':'NOT_CONFIGURED_AUTH_REQUIRED',
+          'received':0,'accepted_pattern':0,'rejected_non_equity':0,'rejected_bad_symbol':0,
+          'error':'Set PUBLIC_DATA_API_KEY on GitHub to enable official KRX data'})
     for name,func in sources:
         try:
             rows,detail=func()

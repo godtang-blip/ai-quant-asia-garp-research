@@ -1,90 +1,67 @@
-# Asia Equity Research — GARP-style research pipeline v0.3.1
+# Asia GARP Research v0.5 — Integrated GitHub Research Pipeline
 
-**Independent research-only prototype. Not affiliated with or endorsed by Redpoint Partners.**
+> **Research-only independent project.** No trading, brokerage orders, allocations, or investment recommendations. Not affiliated with Redpoint Partners or any financial institution. Developed with AI coding assistance; human researcher remains responsible for all numbers, classifications and decisions.
 
-This project began as a personal investment/quant workflow and evolved through mistakes observed in real runs. Its objective is **new company discovery → data provenance → comparable investigation scores → primary-source verification → evidence and counterevidence → an analyst's explicit accept/reject/on-hold decision**. A high score is *not* a security recommendation or an expected return.
+**One repository, one GitHub Actions execution, three research stages:**
 
-## What is demonstrated vs not yet demonstrated
+1. **DISCOVERY** — Five Asian equity markets (Korea, Japan, China, Hong Kong, Taiwan), curated + actual source-discovered symbols, provenance, basic vendor screening and market balance. In `all5_official`, the pipeline *attempts* official Japan JPX, Taiwan TWSE, optionally Korea KRX with a data.go.kr API key, official Nikkei index, and five vendor regional screeners. China and Hong Kong listing discovery still depends on the vendor screener; not a census. Source failures are logged, not replaced with fictional tickers.
+2. **EVIDENCE** — Dated news **headlines only**, vendor quarterly financial rows, optional regulator DART **filing index** (Korea) and explicitly analyst-attested reconciliations of primary filing numbers. Financial statement comparisons must have the same period, units, a dated official/issuer source locator, a reviewer and <=2% deviation. Nothing is automatically counted as filing verified merely because a URL exists.
+3. **VALUATION + MEMO** — Three manually specified FCFF DCF scenarios (bear/base/bull), strongest opposing evidence, catalyst, falsification rule, analyst accept/reject decisions, and a per-company research memorandum. The engine does not invent growth forecasts or supply a target price when model inputs are absent. Only reviewed hypotheses pass the final stage.
 
-| Area | Actually implemented | Still NOT verified |
-|---|---|---|
-| Universe | 61 curated + official Nikkei index discovery + 5 Yahoo regional screeners (Korea, Japan, mainland China, Hong Kong, Taiwan), dedup, security-type filtering, market-balanced fetch | Complete stock exchange census, perfect country coverage, verified issuer identities |
-| Fundamentals | Data/vendor metadata, risk flags, 0–100 research-priority scoring with industry-sensitive anchors | Financial statement figures reconciled to issuer primary disclosures, forward alpha, calibrated cross-sector returns |
-| FX | Quote/reporting currency, USD FX quotes and 1-year average flow proxy, dated source/FX logs; hold ambiguous mixed-currency forward P/E | Audited historical FX translation of actual matched fiscal cash-flow periods; currencies of every provider EPS field |
-| Accounting | Per-issuer accounting standard disclosure ledger and unknown/issuer-review status | Automatic GAAP→IFRS restatement or validated economic comparability across different standards |
-| Evidence | Google News **headlines** with links and dates, Yahoo vendor quarterly figures, optional Korea OpenDART filing **index** with regulator URLs | Full article reading; auditing the reported figures; five-market official filing API integrations |
-| Research | Candidate investigation queue including newly discovered equities, analyst `ACCEPTED / REJECTED / ON_HOLD / INVESTIGATING` decisions; evidence book | Autonomous acceptance of hypotheses, verified valuation or investment memo |
-| Validation | Automated tests, versioned logs, **same-input 10 scenario ±20% weight perturbation**, quality diagnostic outputs | Empirical predictive power, unbiased historical point-in-time walk-forward backtest |
+**Important: This version upgrades research *process auditing*, not demonstrated stock-picking quality.** Its new quality tests cannot establish predictive power or future return outperformance.
 
-## Quick start — existing GitHub repository
+## GitHub installation (existing repository; no new repository needed)
 
-1. Unzip `asia_garp_research_v031_full_repo.zip`. Open the **inner** `ai-quant-asia-garp-research/` folder and replace the files at the root of the existing research repository. Include the **hidden `.github/` folder**. Push/commit. Do not touch other paper portfolios.
-2. Open **Actions → Asia GARP Research v0.3.1 — Manual Only → Run workflow**.
-3. First 5-market test: `max_symbols=150`, `discover_mode=all5`, `per_region=90`, `fx_mode=live`, `evidence_mode=full`, `evidence_limit=8`. `max_symbols=0` runs the entire discovered watchlist, which can take much longer and hit vendor rate limits; test at 150 first.
-4. Download the `asia-garp-research-v031-...` Artifact ZIP. Read `03_research_report.md`, `24_research_quality_audit.md`, `27_evidence_book.md`, `18_evidence_ledger.csv`, `23_same_input_weight_sensitivity.csv`, `12_discovery_sources_log.csv`.
+1. Download the **full v0.5 GitHub repository ZIP** and unzip it. Copy the **contents** of the inner `ai-quant-asia-garp-research/` folder onto the root of your current `ai-quant-asia-garp-research` GitHub repository. Back up your existing repository first. Include the hidden `.github/` folder. Commit/push using GitHub Desktop (or Git). Do **not** alter your separate `ai-quant-v512-paper` account repository or its `state/latest.zip`.
+2. In GitHub open **Actions → Asia GARP v0.5 | Discovery + Evidence + Valuation (Research Only) → Run workflow**. Use `max_symbols=150`, `discover_mode=all5_official`, `per_region=90`, `fx_mode=live`, `evidence_mode=full`. GitHub Action automatically runs all offline regression and quality-gate tests first.
+3. After a successful run, download the `asia-garp-v05-<run-id>` Artifact ZIP from the Actions run. The most useful files are `03_research_report.md`, `12_discovery_sources_log.csv`, `22_evidence_sources_log.csv`, `32_research_stage_gate.csv`, `33_analyst_memoranda.md`, `34_research_quality_v05.json`, `35_quality_upgrade_comparison.md`, `36_official_exchange_source_registry.csv`.
+4. To verify official filings yourself, edit the two **blank** CSV templates `data/verified_financials.csv` and `data/valuation_assumptions.csv`, plus existing `data/research_decisions.csv`. Commit them and re-run. Empty data are intentional: no false verified recommendations.
 
-**Optional Korea regulator connector:** Create an OpenDART API key directly with the regulator and enter it in GitHub repository **Settings → Secrets and variables → Actions → New repository secret**, name `DART_API_KEY`. Without a key, the workflow still runs and logs `API_KEY_NOT_CONFIGURED`. The key is read from environment only; never put it in code/ZIP/README. OpenDART currently provides **filing metadata links**, not verified numbers. Other four markets require manual issuer links via `data/issuer_source_registry.csv` until official connectors are implemented.
+**Optional Secrets** in Repository Settings → Secrets and variables → Actions:
+- `DART_API_KEY`: Korean OpenDART filing *index*, not verified numerical statements.
+- `PUBLIC_DATA_API_KEY`: Korean financial-regulator/KRX listed-securities *identifier* listing via data.go.kr. Requires approved API access. Optional `KRX_BASE_DATE` **Actions variable** `YYYYMMDD` for exchange holidays; otherwise the code requests previous weekday (which can be a Korean exchange holiday and correctly fail).
 
-### Local / Colab
+**No secret** is required for vendor-only regional screeners, JPX, TWSE, news headlines or local quality checks. Some publisher sites can refuse GitHub-hosted requests or change formats; read logs and do not infer complete official coverage from an empty feed.
+
+## Version 0.5 quality gate: explicitly measurable
+
+| Label | Meaning | Minimum evidence | Automated? |
+|---|---|---|---|
+| `REVIEW_REQUIRED` | Screening rejected or insufficient | Screening output / source logs | Yes |
+| `SCREENED` | Investigation-priority candidate; NOT buy-rated | Pass existing v0.31 anomaly / coverage / equity-type checks | Yes |
+| `EVIDENCE_CHECKED` | Manual **attestation** of 3 reconciled metrics, one fiscal period | Revenue + profit or cash flow + one other metric, exact vendor/filing period, currency/unit, filing URL, page/line, filing date, reviewer; <=2% numeric difference | Verify format/gates automatically; **read filing manually** |
+| `VALUATION_REVIEWED` | Full signed scenario inputs and research counters | DCF bear/base/bull, same currency, source date and URL, explicit thesis, catalyst, bear case, counterevidence, falsification rule | Calculates from entered numbers; **assumptions manually set** |
+| `MEMO_READY` | A sourced reviewed analyst thesis, not a trade | All previous gates + `ACCEPTED` decision and reviewer signature with reasons, counterevidence and revisit trigger | Gate automatic; **decision manual** |
+
+**The new CI asserts gate behavior, not future investment returns.** Financial comparisons with mismatched reporting dates, missing documentation, or >2% uninvestigated differences **fail closed**. Empty CSVs produce zero `EVIDENCE_CHECKED`, `VALUATION_REVIEWED`, `MEMO_READY` names. A signed record is only as accurate as the human reading the source filing; the system does not independently parse every issuer PDF.
+
+### Verified prior-run baseline, used as a smoke check
+
+For the actual archived v0.3.1 result dated 2026-11-18: **684 analyzed**, **623 score available**, **94 screening-eligible**, **287 metric anomaly warnings**, **0 numbers reconciled to primary source**. Applying the new gate logic to that unchanged historical result yields: `SCREENED 94`, `EVIDENCE_CHECKED 0`, `VALUATION_REVIEWED 0`, `MEMO_READY 0`. This accurately describes incomplete verification; it does not prove investment accuracy has increased.
+
+## Local tests and optional replay
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python -m pytest -q tests
-python -m src.v031 --max-symbols 150 --discover-mode all5 --per-region 90 --fx-mode live --evidence-mode full --evidence-limit 8 --output outputs
-# Reproduce scoring offline on a previously saved vendor CSV; NO live FX/news/filings in replay:
-python -m src.v031 --max-symbols 0 --discover-mode off --fx-mode off --snapshot-csv snapshot.csv --evidence-mode off --output replay_outputs
+python -m src.v05 --discover-mode all5_official --max-symbols 150 --per-region 90 --fx-mode live --evidence-mode full --evidence-limit 8 --output outputs
+
+# Historical vendor input: no fresh universe, news, FX, filings
+python -m src.v05 --discover-mode off --fx-mode off --snapshot-csv snapshot.csv --max-symbols 0 --evidence-mode off --output replay_outputs
+# If analyst evidence is used in replay, specify the genuine snapshot cutoff:
+python -m src.v05 --discover-mode off --fx-mode off --snapshot-csv snapshot.csv --asof-date 2026-09-30 --output replay_outputs
 ```
 
-`notebooks/Run_Asia_GARP_Colab.ipynb` is the notebook entry point. DART integration requires a configured key in the execution environment.
+Replay without explicit `--asof-date` **disables promotion from external analyst reviews** to prevent obvious time mixing. Even with an as-of date, historic vendor data and issuer universe are not proven point-in-time complete; no historical return backtest is performed.
 
-## 5 markets ≠ identical numbers ≠ universe census
+## Evidence and valuation caveats
 
-The watchlist combines historical curated names, the official Nikkei 225 constituent list when the page is parseable, and Yahoo Finance screeners by market. Yahoo screens are **vendor subsets**, not full exchange directories. The five markets may be unbalanced due to source limitations; inspect `12_discovery_sources_log.csv` and `11_discovery_universe.csv`. The selected *fetch* sample is round-robin balanced across available markets when `max_symbols>0`, **not the final top-ten portfolio allocation**. A/H dual listings are de-duplicated by ticker only; issuer-level cross-market duplicate reconciliation remains a TODO.
+- `data/verified_financials.csv` requires **one row per exact official/vendor metric comparison**. Each row's `primary_value` and `vendor_value` must be in the **same explicit** currency/unit and exactly matching reporting periods; `filing_page`, `statement_label`, `filing_date`, `filing_url`, and `reviewer` must be provided. `review_status=CONFIRMED` is your attestation that you actually read the filing. This code cannot infer scaling such as millions vs billions; you must convert both values first. Do not enter fake test values into actual research files.
+- `data/valuation_assumptions.csv` uses **raw currency units** for `fcff_year0` and `net_debt`, and **raw number of shares** for `shares_outstanding`, so DCF yields local currency **per share**. Do not mix millions in one field with unscaled numbers in another. Calculations are illustrative, model-sensitive and can be dominated by terminal value; prefer source-linked sustainable cash flows.
+- Not all issuers have reliable positive FCFF; there is **no automatic DCF** for companies lacking reviewed assumptions. A DCF is not intrinsically superior to multiples, SOTP, or residual income for all industries; other models are not implemented in this version.
+- `data/research_decisions.csv` preserves `REJECTED` and `ON_HOLD` theses. Code cannot change analyst opinions; `ACCEPTED` must include complete primary evidence and a counterargument.
+- FX conversion continues the explicit v0.31 proxy logic, **not IAS 21-compliant financial statement restatement**. Cross-currency EPS is still withheld when units are unknown. Industry reference anchors are uncalibrated.
+- Official universe listings are **issuer identities**; they do not verify issuer financial statement data. Japan JPX numeric-only parser excludes its alphanumeric listings; Taiwan TWSE excludes TPEx; Korea KRX requires credentials; China and Hong Kong official issuer adapters are not implemented. Vendor-only discovery remains a partial subset, not a census.
+- Newspaper RSS returns **unread headline metadata**, not verified news claims. No LLM is allowed to invent facts or automatically set investment decisions.
 
-## Accounting and currency rules
-
-- `src/fx.py` (retained from v0.3) reads `currency` (share price/market cap) and `financialCurrency` (financial statements). Converts market cap at a **dated spot**; vendor annual FCF with a **1-year average FX approximation** when available and recomputes comparable USD FCF yield. The provider's FCF period is unknown. Currency conversions are *proxies*, not IAS 21-compliant issuer restatements. Without source FX, no fabricated converted value.
-- A vendor forward EPS in a different/unknown currency is **not** mechanically divided by the local price. Mixed-currency forward P/E is withheld. P/S may use USD market cap and vendor total revenue with a proxy exchange rate, and the assumption is marked.
-- `src/accounting.py` (retained from v0.3) records **issuer-specific** primary-filing evidence (`data/accounting_issuer_evidence.csv`) and marks standards unknown until an analyst enters a dated source. Identifying a standard is **not** restating one GAAP to another, and operating margin/ROIC definitions may still diverge.
-
-## Evidence, rejected hypotheses, and actual investment memos
-
-`18_evidence_ledger.csv`: for every news **headline** / vendor **quarterly value** / optional official **filing listing**, store ticker, date, URL, source tier, and verification status. It deliberately leaves `claim_supported` blank; only analyst review can verify a concrete statement. Headlines are not assumed true; positive/negative classification is not fabricated.
-
-`27_evidence_book.md` joins the high-priority investigation names with those sources, showing exactly what is and is not known. `20_vendor_quarterly_earnings.csv` is not an issuer financial statement; `21_regulator_filings_index.csv` identifies potential Korean primary disclosures but does not read them.
-
-`data/research_decisions.csv` is **manually maintained** with ticker, analyst decision, date, initial thesis, counterevidence, explanation, source URLs, revisit trigger, and reviewer. Decisions: `INVESTIGATING`, `ON_HOLD`, `REJECTED`, `ACCEPTED`. **Rejecting a hypothesis based on evidence is a valid research result** and must be preserved with its underlying reason. A high automation score NEVER automatically becomes `ACCEPTED`.
-
-Final investment memo should explain: business model → structural growth → why market expectations are wrong → valuation method/scenarios → hard catalysts/counterevidence → falsification conditions. An analyst must verify the numerical source evidence and personally defend each assumption.
-
-## Validation: does newer software produce BETTER analysis?
-
-A green CI result verifies that software executes, **not** that the model predicts stock returns. `24_research_quality_audit.json` lists actual collection/coverage/failure metrics and zero issuer-financial-statement reconciliations until manually audited. `23_same_input_weight_sensitivity.csv` measures rank shifts under ten ±20% single-factor weight changes on exactly the same input data; `top10_scenario_share` is a *stability indicator*, not validated alpha.
-
-Different-vintage results are not directly comparable without frozen input universe and vendor data. For future empirical performance verification, store timestamped scores and source as-of dates, prohibit future data leakage, track long-horizon returns, and test out-of-sample after sample size builds. Never infer superiority from a larger universe, more code, or higher rank.
-
-## Versions — failures are part of the portfolio
-
-| Version | What changed | What prompted the next revision |
-|---|---|---|
-| 0.1 | Small GARP sample | Semiconductor concentration and suspect Yahoo metrics |
-| 0.2 | Curated 61 names, industry peer groups, explicit quality warnings | Hong Kong currency conflict and period/PE uncertainties |
-| 0.2.1 | More conservative anomaly quarantine and currency limitations | Wanted previously unknown securities and a common investigation scale |
-| 0.3 | Expanded to 416 names in **one observed run**, 355 discovered, numerical sector-sensitive score and FX audit | 65% Japan; mainland China nearly absent; new discoveries excluded from shortlist; actual GAAP/filing not verified |
-| **0.3.1** | Five-market discovery attempts, market-balanced fetch, provisional new-name shortlist, mixed-currency PE hold, source ledger, decision log, same-input sensitivity and quality audit | **Live five-market/evidence run still to validate**; some vendor datasets may be unavailable |
-
-**Commit history is not enough to explain *why* a decision changed.** Compare corresponding archived run Artifacts, source/evidence status, and `CHANGELOG.md`; write up meaningful issues and their fixes. Do not treat 0.3.1 offline tests as a live-source or prediction-quality validation.
-
-## Outputs
-
-Core: `01_all_research_candidates.csv`, `02_research_shortlist.csv`, `03_research_report.md`, `04_run_metadata.json`, `09_filing_verification_queue.csv`, `11_discovery_universe.csv`, `12_discovery_sources_log.csv`, `13_fx_normalization_audit.csv`, `14_accounting_comparability_audit.csv`, `15_cross_industry_scores.csv`, `17_fx_quotes_log.csv`.
-
-New v0.3.1: `18_evidence_ledger.csv`, `19_news_headlines.csv`, `20_vendor_quarterly_earnings.csv`, `21_regulator_filings_index.csv`, `22_evidence_sources_log.csv`, `23_same_input_weight_sensitivity.csv`, `24_research_quality_audit.json`, `25_research_quality_audit.md`, `26_research_decisions.csv`, `27_evidence_book.md`, `28_decision_log_GUIDE.md`, `29_new_discovery_research_queue.csv`.
-
-## Defending the methodology in a PM interview
-
-See [`docs/PM_면접_설계방어_질문.md`](docs/PM_면접_설계방어_질문.md) for **what each score measures, why weights/FX/GAAP are not yet proven, counterfactuals, and 10 concrete questions**. This is a self-test, not a claim that AI-assisted code was written independently.
-
-## Responsible publication and AI contributions
-
-Only code, methods, selected **redacted** example outputs and permitted sources should be published. Never commit secrets, personal account balances, paid licensed datasets, or complete news articles. AI assisted implementation, while project requirements, hypothesis questions, reviewing outcomes and research decisions are user-directed; personal development proficiency is not misrepresented. Code does **not** place trades or modify the other simulated portfolios.
+See `docs/QUALITY_SPEC_V05.md` for exact fields and `docs/README_v031_legacy.md` for historical engineering lineage.

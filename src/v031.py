@@ -386,7 +386,7 @@ def main():
     p.add_argument('--universe',type=Path,default=Path('data/universe.csv'))
     p.add_argument('--output',type=Path,default=Path('outputs'))
     p.add_argument('--max-symbols',type=int,default=150,help='0=all discovered, >0=market-balanced limit')
-    p.add_argument('--discover-mode',choices=['off','nikkei','regional5','all5'],default='all5')
+    p.add_argument('--discover-mode',choices=['off','nikkei','regional5','all5','all5_official'],default='all5')
     p.add_argument('--fx-mode',choices=['live','off'],default='live')
     p.add_argument('--delay-seconds',type=float,default=1.0)
     p.add_argument('--snapshot-csv',type=Path,default=None)

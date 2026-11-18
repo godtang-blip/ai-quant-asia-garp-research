@@ -1,0 +1,66 @@
+name: Asia GARP Research v0.3.1 — Manual Only
+on:
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: 'Max tickers to fetch; 0=all available; 150 recommended for first cross-market run'
+        required: true
+        type: string
+        default: '150'
+      discover_mode:
+        description: 'all5=Japan official index and Yahoo screeners for 5 Asian markets'
+        required: true
+        type: choice
+        options: [all5, regional5, nikkei, off]
+        default: all5
+      per_region:
+        description: 'Maximum regional screener results per each of 5 markets (NOT all listed shares)'
+        required: true
+        type: string
+        default: '90'
+      fx_mode:
+        description: 'live=Yahoo dated quote and one-year average flow proxy; off=no conversion'
+        required: true
+        type: choice
+        options: [live, off]
+        default: live
+      evidence_mode:
+        description: 'full=headline + vendor quarter + optional Korean DART filing index; news or off'
+        required: true
+        type: choice
+        options: [full, news, off]
+        default: full
+      evidence_limit:
+        description: 'Max top investigation candidates to collect evidence for (0..30, 8 recommended)'
+        required: true
+        type: string
+        default: '8'
+permissions:
+  contents: read
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run offline regression tests
+        run: python -m pytest -q tests
+      - name: Run v0.3.1 cross-market investigation / no trades
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        run: |
+          python -m src.v031 --max-symbols "${{ inputs.max_symbols }}" --discover-mode "${{ inputs.discover_mode }}" --per-region "${{ inputs.per_region }}" --fx-mode "${{ inputs.fx_mode }}" --evidence-mode "${{ inputs.evidence_mode }}" --evidence-limit "${{ inputs.evidence_limit }}" --delay-seconds 1.0 --output outputs
+      - name: Upload analysis outputs, including logs on partial failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asia-garp-research-v031-${{ github.run_id }}
+          path: outputs/
+          retention-days: 30
+          if-no-files-found: warn
