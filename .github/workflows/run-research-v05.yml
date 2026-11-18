@@ -128,6 +128,7 @@ jobs:
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
           GARP_VALIDATED_CHINA_PUBLISHER_DIR: ${{ steps.listing_bundle.outputs.publisher_dir }}
           GARP_ENABLE_BAOSTOCK: ${{ vars.GARP_ENABLE_BAOSTOCK }}
+          QUANTSONAR_API_KEY: ${{ vars.GARP_ENABLE_QUANTSONAR_RESEARCH == '1' && secrets.QUANTSONAR_API_KEY || '' }}
           TUSHARE_TOKEN: ${{ inputs.enable_tushare_research && secrets.TUSHARE_TOKEN || '' }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_VALIDATED_CHINA_VENDOR_DIR: ${{ steps.listing_bundle.outputs.vendor_dir }}
@@ -155,6 +156,7 @@ jobs:
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
           GARP_VALIDATED_CHINA_PUBLISHER_DIR: ${{ steps.listing_bundle.outputs.publisher_dir }}
+          QUANTSONAR_API_KEY: ${{ secrets.QUANTSONAR_API_KEY }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_VALIDATED_CHINA_VENDOR_DIR: ${{ steps.listing_bundle.outputs.vendor_dir }}

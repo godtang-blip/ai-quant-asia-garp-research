@@ -16,6 +16,7 @@ from .evidence import dart_stock_code_map
 from .china_vendor_exports import (API as TUSHARE_API, SOURCE as TUSHARE_URL,
                                    LIVE_SOURCE_IDS, SOURCE_IDS, fetch_tushare_api, load_tushare_export)
 from .china_security_master import ENDPOINT as BAOSTOCK_ENDPOINT, fetch_baostock
+from .quantsonar_listings import SOURCE_IDS as QUANTSONAR_IDS, URL as QUANTSONAR_URL, fetch_quantsonar
 from .venue_sources import SOURCES, fetch_listing, failure_code, observed_utc
 from .listing_exports import VENUES, load_listing_export
 
@@ -121,6 +122,16 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                        for venue, (market, _, _) in SOURCES.items())
         if security_master or os.environ.get('GARP_ENABLE_BAOSTOCK') == '1':
             sources.append(('baostock_security_master', 'China', 'THIRD_PARTY_SECURITY_MASTER', fetch_baostock))
+        quant_key = os.environ.get('QUANTSONAR_API_KEY', '').strip()
+        if quant_key:
+            sources.extend((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
+                            lambda venue=venue: fetch_quantsonar(venue, quant_key))
+                           for venue, source_id in QUANTSONAR_IDS.items())
+        elif china_only:
+            logs.extend(dict(source=source_id, market='China', source_url=QUANTSONAR_URL,
+                             status='NOT_CONFIGURED_AUTH_REQUIRED', error='QUANTSONAR_API_KEY absent',
+                             source_kind='THIRD_PARTY_SECURITY_MASTER')
+                        for source_id in QUANTSONAR_IDS.values())
         token = os.environ.get('TUSHARE_TOKEN', '').strip()
         if token:
             sources.extend((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
@@ -164,6 +175,8 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
             entry.update(source_url=BAOSTOCK_ENDPOINT,
                          scope='Active A-share master and dated provider inventory',
                          evidence_classification='THIRD_PARTY_SECURITY_MASTER')
+        if name in QUANTSONAR_IDS.values():
+            entry.update(source_url=QUANTSONAR_URL, evidence_classification='THIRD_PARTY_SECURITY_MASTER')
         if name in LIVE_SOURCE_IDS.values():
             entry.update(source_url=TUSHARE_API, evidence_classification='THIRD_PARTY_SECURITY_MASTER')
         if name in SOURCE_IDS.values():

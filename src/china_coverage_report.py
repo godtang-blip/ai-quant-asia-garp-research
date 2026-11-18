@@ -3,16 +3,17 @@ import json
 
 import pandas as pd
 
+from .quantsonar_listings import SOURCE_IDS as QUANTSONAR_IDS
 from .china_vendor_exports import LIVE_SOURCE_IDS, SOURCE_IDS
 
 BOARDS = {
     'SSE_MAIN': (r'(?:600|601|603|605)\d{3}\.SS', {'live_SSE', 'export_SSE'}),
     'SSE_STAR': (r'(?:688|689)\d{3}\.SS', {'live_SSE_STAR', 'export_SSE'}),
     'SZSE_MAIN': (r'(?:000|001|002|003)\d{3}\.SZ', {'live_SZSE', 'live_SZSE_JSON', 'export_SZSE',
-                                                      SOURCE_IDS['SZSE'], LIVE_SOURCE_IDS['SZSE']}),
+                                                      SOURCE_IDS['SZSE'], LIVE_SOURCE_IDS['SZSE'], QUANTSONAR_IDS['SZSE']}),
     'SZSE_CHINEXT': (r'(?:300|301)\d{3}\.SZ', {'live_SZSE', 'live_SZSE_JSON', 'export_SZSE',
-                                                  SOURCE_IDS['SZSE'], LIVE_SOURCE_IDS['SZSE']}),
-    'BSE': (r'(?:4\d|8\d|92)\d{4}\.BJ', {'live_BSE', 'export_BSE', SOURCE_IDS['BSE'], LIVE_SOURCE_IDS['BSE']}),
+                                                  SOURCE_IDS['SZSE'], LIVE_SOURCE_IDS['SZSE'], QUANTSONAR_IDS['SZSE']}),
+    'BSE': (r'(?:4\d|8\d|92)\d{4}\.BJ', {'live_BSE', 'export_BSE', SOURCE_IDS['BSE'], LIVE_SOURCE_IDS['BSE'], QUANTSONAR_IDS['BSE']}),
 }
 
 
@@ -77,6 +78,9 @@ def acquisition_acceptance(overlaps, source_log, probes):
             live_count += bool(live)
             imported_count += bool(imported)
             supporting.update(live | imported)
+        quant = logs.get(QUANTSONAR_IDS[exchange], {})
+        quant_count = int(board_rows.listing_source_ids.map(
+            lambda ids: QUANTSONAR_IDS[exchange] in json.loads(ids)).sum())
         tushare = logs.get(LIVE_SOURCE_IDS[exchange], {})
         if live_count:
             remaining = 'Validate dated scope and security type independently'
@@ -100,6 +104,13 @@ def acquisition_acceptance(overlaps, source_log, probes):
                              'Keep accepted listing source configured in all5_official' if supporting else
                              'No accepted listings available from this run'
                          ),
+                         quantsonar_accepted_n=quant_count,
+                         quantsonar_only_n=int(board_rows.listing_source_ids.map(
+                             lambda ids: set(json.loads(ids)) == {QUANTSONAR_IDS[exchange]}).sum()),
+                         quantsonar_status=quant.get('status', 'NOT_REQUESTED'),
+                         quantsonar_failure=quant.get('failure_code', ''),
+                         quantsonar_diagnostics=quant.get('response_diagnostics', ''),
+                         quantsonar_completeness=quant.get('completeness_check', ''),
                          tushare_status=tushare.get('status', 'NOT_REQUESTED'),
                          tushare_failure=tushare.get('failure_code', ''),
                          eastmoney_probe_status=probe.get('status', 'NOT_REQUESTED'),
