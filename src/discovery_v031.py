@@ -71,6 +71,15 @@ def source_region(market:str, max_rows:int=100, page_size:int=50)->tuple[list[di
                   'rejected_bad_symbol':rejected.count('INVALID_MARKET_SYMBOL')}
 
 
+def _configured_export_path(venue: str, directory: str | None,
+                            validated_dir: str | None) -> Path | None:
+    if validated_dir and venue in {'SZSE', 'BSE'}:
+        validated = Path(validated_dir) / f'{venue}.csv'
+        if validated.is_file():
+            return validated
+    return Path(directory) / f'{venue}.csv' if directory else None
+
+
 def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, *, security_master:bool=False,
                           china_only:bool=False, provisional_inventory:list|None=None)->tuple[pd.DataFrame,pd.DataFrame]:
     if mode not in ('off','all5','regional5','nikkei','all5_official'):
@@ -123,13 +132,16 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                              source_kind='THIRD_PARTY_SECURITY_MASTER')
                         for source_id in LIVE_SOURCE_IDS.values())
         vendor_directory = os.environ.get('GARP_TUSHARE_EXPORT_DIR')
-        if vendor_directory:
-            sources.extend((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
-                            lambda venue=venue: load_tushare_export(Path(vendor_directory)/f'{venue}.csv', venue))
-                           for venue, source_id in SOURCE_IDS.items())
+        validated_vendor = os.environ.get('GARP_VALIDATED_CHINA_VENDOR_DIR')
+        for venue, source_id in SOURCE_IDS.items():
+            path = _configured_export_path(venue, vendor_directory, validated_vendor)
+            if path is not None:
+                sources.append((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
+                                lambda venue=venue, path=path: load_tushare_export(path, venue)))
         directory = os.environ.get('GARP_LISTING_EXPORT_DIR')
+        validated_publisher = os.environ.get('GARP_VALIDATED_CHINA_PUBLISHER_DIR')
         for venue, (market, *_) in VENUES.items():
-            path = Path(directory) / f'{venue}.csv' if directory else None
+            path = _configured_export_path(venue, directory, validated_publisher)
             if path is None or not path.exists():
                 logs.append({'source': f'export_{venue}', 'market': market,
                              'source_kind': 'PUBLISHER_EXPORT', 'status': 'EXPORT_NOT_PROVIDED'})

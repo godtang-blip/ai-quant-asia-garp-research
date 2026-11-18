@@ -62,3 +62,14 @@ def test_normal_tushare_requires_explicit_input():
     integrated = script.split('      - name: Integrated three-stage research / no orders')[1].split(
         '      - name: Listing discovery only')[0]
     assert "TUSHARE_TOKEN: ${{ inputs.enable_tushare_research && secrets.TUSHARE_TOKEN || '' }}" in integrated
+
+
+def test_private_bundle_is_opt_in_and_only_validated_paths_reach_research():
+    script = (WORKFLOWS / 'run-research-v05.yml').read_text(encoding='utf-8')
+    assert "if: ${{ inputs.use_private_listing_bundle }}" in script
+    assert "vars.GARP_LISTING_ARTIFACTS_ALLOWED" in script
+    assert "--jq '.private'" in script
+    assert 'persist-credentials: false' in script
+    assert script.count("GARP_VALIDATED_CHINA_PUBLISHER_DIR: ${{ steps.listing_bundle.outputs.publisher_dir }}") == 2
+    assert script.count("GARP_VALIDATED_CHINA_VENDOR_DIR: ${{ steps.listing_bundle.outputs.vendor_dir }}") == 2
+    assert '53_china_import_validation.json' in script

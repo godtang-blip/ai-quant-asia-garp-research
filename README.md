@@ -65,6 +65,8 @@ Review `11_discovery_universe.csv` and `12_discovery_sources_log.csv` for listin
 
 Optional configuration includes `PUBLIC_DATA_API_KEY` for authorized KRX data, `DART_API_KEY` for OpenDART, and `GARP_LISTING_EXPORT_DIR` for dated exchange files. Tushare requires entitled access or an authorized dated snapshot. The normal workflow requires explicit opt-in for token use. [Export format and coverage checks](docs/FIVE_MARKET_COVERAGE.md) · [Provider and acceptance instructions](docs/CHINA_A_SHARE_DISCOVERY.md#single-run-acquisition-acceptance)
 
+For SZSE and BSE, the listing-only workflow can also validate and stage authorized dated snapshots from a private data repository pinned to a commit. Live retrieval for both exchanges remains unresolved. Optional representative Yahoo Finance diagnostics distinguish listing acquisition from financial-data availability. [Publisher downloads, private bundle and single-run verification](docs/CHINA_A_SHARE_DISCOVERY.md#szse-and-bse-acquisition-handoff)
+
 ## Version History — Problems Encountered, Why They Mattered, and What Changed
 
 This project did not begin as a finished investment model with known answers. It evolved by **documenting observed failures, sampling biases, and gaps in evidence verification**, then adjusting the research process in response. The figures and validation status below refer to the observations or implementations available at each release. Changes in scores or universe size **must not be interpreted as improved investment returns**.

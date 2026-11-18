@@ -105,3 +105,75 @@ The opt-in probe sends an unauthenticated HEAD request to Tushare's HTTPS API ho
 Run paid or authorized acquisition only after confirming the account is entitled to both `stock_basic` queries. The discovery-only run uses the optional repository secret `TUSHARE_TOKEN` if configured. After validating actual retrieval, a normal `all5_official` dispatch can opt in with `enable_tushare_research`. The default is false, and the ordinary research step receives an empty token unless explicitly enabled. These inputs preserve the existing screening and security-type gates. A dated authorized export remains an alternative to credential-based acquisition.
 
 The readiness iteration's cloud test could not reach Tushare through the proxy and had zero accepted listings on each missing board. Eastmoney was skipped because permission was unconfirmed. No authorized SZSE/BSE CSV or token was available. These findings do not establish GitHub runner reachability.
+
+## SZSE and BSE acquisition handoff
+
+The official routes were audited before changing production acquisition. Each cloud probe below was bounded and received **proxy CONNECT 403 with no origin response**. These results describe this cloud, while the preceding Actions reset, HTTP 500 and HTTP 403 were observed on that runner.
+
+| Source | What was checked | Decision |
+|---|---|---|
+| SZSE A-share listing | Official listing page; XLSX catalogs `1110` and `1110x012`; JSON for both catalogs on `ShowReport` and `ShowReport/data`, inserting only the first page and `tab1` | Current AKShare 1.20.65 uses `1110` on `ShowReport` for the A-share XLSX and extracts explicit board, code, name and listing date. Its `/data` calls serve other report types. No evidence established that the alternative catalog or URL serves the same current A-share inventory. The production routes are unchanged. |
+| BSE current listings | Public current-listed page and its existing POST listing route; announcements, NEEQ and regulator pages | AKShare uses the same BSE endpoint and the active-market filter. It uses `totalPages` and `content`; that does not establish the current live schema or prove why Actions returned 403. Use an actual currently-listed archive where allowed. A legacy `4xxxxx` or `8xxxxx` code alone cannot distinguish BSE from NEEQ. Current-to-legacy mapping was not verified. The importer preserves the published code and never manufactures replacements in the 920 series. |
+| Independent candidates | CNINFO listing/search resources, Eastmoney, Tushare documentation and API, BaoStock native TCP preflight | CNINFO search resources were inaccessible and did not establish current status or complete scope. Eastmoney access conditions and board scope remain unverified. Tushare was blocked before origin and no entitled credential was available. BaoStock did not resolve the native TCP host in this cloud. Existing optional authenticated and dated export paths remain available. |
+
+### From authorized publisher download to an Actions artifact
+
+Use a network and account permitted by the source. These transformations operate on saved files and make no network requests.
+
+1. **SZSE.** From the official current A-share list, select its A-share workbook download. Save the original file and record the effective date and independently documented same-scope Main Board and ChiNext totals. The recognized columns are `板块,A股代码,A股简称,A股上市日期`. Use actual recorded counts for `MAIN_COUNT` and `CHINEXT_COUNT`. [Official SZSE list](https://www.szse.cn/market/product/stock/list/index.html)
+2. **BSE.** Use the official currently-listed BSE company page and confirm its scope excludes NEEQ-only companies. If collection and use are permitted, use the page's normal pagination controls and save only the JSON/JSONP response bodies of the current listing request in order. Keep no request headers, cookies, tokens, or session archives. Record the actual as-of date and an independently documented total for the same listed-equity scope. The offline parser expects the response's `totalPages` and `content` fields and checks all available page identifiers and counts. If access is denied, use an entitled Tushare `stock_basic` BSE export instead, as described above. [Official BSE list](https://www.bse.cn/nq/listedcompany.html)
+3. **Normalize and verify both files.** Set `AS_OF` and the three count variables from the original dated sources. The file and totals may differ in date between venues; run each command with that venue's actual date. A missing or mismatched board fails validation.
+
+   ```bash
+   mkdir -p private-input/publisher
+   python -m src.szse_publisher_export original-szse.xlsx private-input/publisher/SZSE.csv \
+     --as-of "$AS_OF" --expected-main "$MAIN_COUNT" --expected-chinext "$CHINEXT_COUNT"
+   python -m src.bse_publisher_export --as-of "$AS_OF" --expected-total "$BSE_COUNT" \
+     --confirm-active-bse-list --output private-input/publisher/BSE.csv page-*.json
+   sha256sum private-input/publisher/*.csv
+   ```
+
+   Provide BSE pages in zero-based order; use zero-padded filenames for the glob or pass the explicit ordered list. For an entitled vendor export, use `tushare/SZSE.csv` or `tushare/BSE.csv` instead and keep the provider fields and effective date described above. Vendor evidence remains separate from publisher data. The validator takes a complete list of manifest entries in `private-input/manifest.json`. Each entry has:
+
+   | Manifest field | Required value |
+   |---|---|
+   | `schema_version` | Top-level value `1` alongside the top-level `files` array |
+   | `path` | One of `publisher/SZSE.csv`, `publisher/BSE.csv`, `tushare/SZSE.csv`, `tushare/BSE.csv` |
+   | `sha256` | Lowercase SHA-256 of that exact file |
+   | `as_of`, `scope_as_of` | Same actual effective date in `YYYY-MM-DD`, at most seven Shanghai calendar days old |
+   | `scope_url` | Public HTTPS publisher or provider reference used to check the dated scope and counts |
+   | `board_counts` | Object with actual expected counts keyed by `SZSE_MAIN` and `SZSE_CHINEXT`, or by `BSE` alone |
+
+   Example manifest shape, with values to replace from your sources:
+
+   ```json
+   {
+     "schema_version": 1,
+     "files": [
+       {
+         "path": "publisher/SZSE.csv",
+         "sha256": "<sha256>",
+         "as_of": "<date>",
+         "scope_as_of": "<same date>",
+         "scope_url": "<dated SZSE reference>",
+         "board_counts": {"SZSE_MAIN": null, "SZSE_CHINEXT": null}
+       },
+       {
+         "path": "publisher/BSE.csv",
+         "sha256": "<sha256>",
+         "as_of": "<date>",
+         "scope_as_of": "<same date>",
+         "scope_url": "<dated BSE reference>",
+         "board_counts": {"BSE": null}
+       }
+     ]
+   }
+   ```
+
+   The validator reconciles operator-provided references and counts against the actual staged rows. A matching manifest establishes internal count consistency; it depends on the operator checking the original source and rights. Validate locally with `python -m src.china_listing_bundle --input private-input --output validated-listings`. Review its `bundle_validation.json` before proceeding. For an approved local-only run, point `GARP_LISTING_EXPORT_DIR` or `GARP_TUSHARE_EXPORT_DIR` to the relevant `validated-listings/publisher` or `validated-listings/tushare` directory.
+4. **Materialize the files on a fresh runner.** If the source permits the proposed storage and derived outputs, store only the reviewed CSVs and manifest in a separate private GitHub repository and commit them. In the research repository set `GARP_LISTING_DATA_REPOSITORY` to its `owner/repository`, `GARP_LISTING_DATA_REF` to that commit's full 40-character SHA, and the secret `GARP_LISTING_DATA_TOKEN` to a fine-grained, read-only token scoped to that private repository. Set variable `GARP_LISTING_ARTIFACTS_ALLOWED=1` only when the provider permits the research repository's derived run logs and artifacts, which may contain names and codes. If distribution or GitHub storage is disallowed, run locally in the authorized environment and keep the data there.
+5. **Run one consolidated test.** Select this PR branch with `discovery_only`, `china_only`, and `use_private_listing_bundle` enabled. Actions checks that the source repository is private and accessible, checks out the pinned commit without persisting its token, and stages only validated files for the existing importers. Invalid material for one venue leaves the other usable. The validator does not execute any content from the data repository. See `53_china_import_validation.json` for date, checksum, count reconciliation and per-file resolution, `49_china_board_coverage.csv` and `52_china_acquisition_acceptance.csv` for the imported or live outcomes, and `50_china_source_overlap.csv` for overlaps. Normal research can use the same opt-in bundle; discovery-only remains the appropriate first validation.
+
+### Finance support is a separate question
+
+For a bounded check in that same run, set repository variable `GARP_CHINA_FINANCE_PROBE=1` to test one known example code per missing board via the unchanged Yahoo Finance adapter. `54_china_financial_provider_probe.csv` reports whether each returned an equity type and any financial field names, with a 15-second subprocess limit per symbol and no scoring or numerical financial data in the report. The current cloud probe of `000001.SZ`, `300750.SZ`, and `920002.BJ` returned proxy connection failures before a Yahoo response, so neither live finance support nor lack of support was established. Fixture integrations confirmed that accepted `.SZ` and `.BJ` listings enter financial retrieval with their suffix and source/date evidence intact, and failures, non-equity types and weak fundamentals remain subject to the existing gates.

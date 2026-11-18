@@ -18,6 +18,10 @@ on:
         description: 'Allow an already validated Tushare token in normal official research'
         type: boolean
         default: false
+      use_private_listing_bundle:
+        description: 'Retrieve and validate authorized listing files from a pinned private data repository'
+        type: boolean
+        default: false
       max_symbols:
         description: 'Max fetched stocks; 150 recommended; 0=all discovered (may be slow)'
         required: true
@@ -65,6 +69,56 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Regression and quality gate tests
         run: python -m pytest -q tests
+      - name: Check private listing bundle configuration
+        id: listing_bundle_config
+        if: ${{ inputs.use_private_listing_bundle }}
+        env:
+          LISTING_DATA_REPOSITORY: ${{ vars.GARP_LISTING_DATA_REPOSITORY }}
+          LISTING_DATA_REF: ${{ vars.GARP_LISTING_DATA_REF }}
+          LISTING_DATA_TOKEN: ${{ secrets.GARP_LISTING_DATA_TOKEN }}
+          LISTING_ARTIFACTS_ALLOWED: ${{ vars.GARP_LISTING_ARTIFACTS_ALLOWED }}
+        run: |
+          if [[ "$LISTING_ARTIFACTS_ALLOWED" != '1' ]]; then
+            printf '%s\n' '::warning::Private listing bundle skipped. Set GARP_LISTING_ARTIFACTS_ALLOWED=1 only when the provider permits derived listing logs and artifacts in this repository.'
+          elif [[ "$LISTING_DATA_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
+                  "$LISTING_DATA_REF" =~ ^[0-9a-fA-F]{40}$ &&
+                  -n "$LISTING_DATA_TOKEN" ]]; then
+            if [[ "$(GH_TOKEN="$LISTING_DATA_TOKEN" gh api --hostname github.com "repos/$LISTING_DATA_REPOSITORY" --jq '.private' 2>/dev/null)" == true ]]; then
+              printf 'ready=true\n' >> "$GITHUB_OUTPUT"
+            else
+              printf '%s\n' '::warning::Could not confirm that the data repository is private and readable. Continuing without the private input.'
+            fi
+          else
+            printf '%s\n' '::warning::Private listing bundle requires owner/repository, a full commit SHA and a contents-read token. Continuing with configured discovery routes.'
+          fi
+      - name: Check out private listing bundle
+        id: listing_bundle_checkout
+        if: ${{ steps.listing_bundle_config.outputs.ready == 'true' }}
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GARP_LISTING_DATA_REPOSITORY }}
+          ref: ${{ vars.GARP_LISTING_DATA_REF }}
+          token: ${{ secrets.GARP_LISTING_DATA_TOKEN }}
+          path: .garp-inputs
+          persist-credentials: false
+      - name: Validate private listing bundle
+        id: listing_bundle
+        if: ${{ steps.listing_bundle_checkout.outcome == 'success' }}
+        env:
+          LISTING_DATA_REF: ${{ vars.GARP_LISTING_DATA_REF }}
+        run: |
+          bundle_outputs="$(mktemp "$RUNNER_TEMP/garp-listing-outputs.XXXXXX")"
+          if [[ "$(git -C .garp-inputs rev-parse HEAD)" == "${LISTING_DATA_REF,,}" ]] &&
+              GITHUB_OUTPUT="$bundle_outputs" python -m src.china_listing_bundle --input .garp-inputs --output "$RUNNER_TEMP/garp-validated-inputs"; then
+            cat "$bundle_outputs" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' '::warning::Private listing bundle validation failed. Continuing without the private input.'
+          fi
+          rm -f "$bundle_outputs"
+      - name: Report private listing checkout failure
+        if: ${{ steps.listing_bundle_checkout.outcome == 'failure' }}
+        run: printf '%s\n' '::warning::Private listing checkout failed. Continuing without the private input.'
       - name: Integrated three-stage research / no orders
         if: ${{ !inputs.discovery_only }}
         env:
@@ -72,9 +126,11 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
+          GARP_VALIDATED_CHINA_PUBLISHER_DIR: ${{ steps.listing_bundle.outputs.publisher_dir }}
           GARP_ENABLE_BAOSTOCK: ${{ vars.GARP_ENABLE_BAOSTOCK }}
           TUSHARE_TOKEN: ${{ inputs.enable_tushare_research && secrets.TUSHARE_TOKEN || '' }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
+          GARP_VALIDATED_CHINA_VENDOR_DIR: ${{ steps.listing_bundle.outputs.vendor_dir }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
           GARP_INPUT_EVIDENCE_MODE: ${{ inputs.evidence_mode }}
           GARP_INPUT_FX_MODE: ${{ inputs.fx_mode }}
@@ -98,8 +154,10 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
+          GARP_VALIDATED_CHINA_PUBLISHER_DIR: ${{ steps.listing_bundle.outputs.publisher_dir }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
+          GARP_VALIDATED_CHINA_VENDOR_DIR: ${{ steps.listing_bundle.outputs.vendor_dir }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
           GARP_CHINA_PROVIDER_PROBE: ${{ inputs.china_provider_probe && '1' || '0' }}
           GARP_EASTMONEY_PROBE_ALLOWED: ${{ vars.GARP_EASTMONEY_PROBE_ALLOWED }}
@@ -129,6 +187,17 @@ jobs:
               print('::warning::PARTIAL_COVERAGE — missing official listings for', ','.join(r['markets_without_retrieved_official_issuer_list']))
           print('Market coverage:',r['market_coverage_status'],'dominant:',r['dominant_market'],r['dominant_market_share_pct'])
           PY
+      - name: Probe representative financial-provider symbols
+        if: ${{ inputs.discovery_only && inputs.china_only && vars.GARP_CHINA_FINANCE_PROBE == '1' }}
+        run: python -m src.china_finance_probe --output outputs/54_china_financial_provider_probe.csv
+      - name: Include private listing bundle validation summary
+        if: ${{ !cancelled() && steps.listing_bundle.outcome == 'success' }}
+        run: |
+          summary="$RUNNER_TEMP/garp-validated-inputs/bundle_validation.json"
+          if [[ -f "$summary" ]]; then
+            mkdir -p outputs
+            cp -- "$summary" outputs/53_china_import_validation.json
+          fi
       - name: Upload research artifacts (including troubleshooting artifacts)
         if: always()
         uses: actions/upload-artifact@v4
