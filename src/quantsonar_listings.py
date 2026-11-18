@@ -16,16 +16,75 @@ URL = 'https://quantsonar.com/v1/reference/stocks'
 SOURCE_IDS = {'SZSE': 'quantsonar_SZSE', 'BSE': 'quantsonar_BSE'}
 
 
+FIELDS = {'symbol', 'name', 'market', 'list_status', 'exchange', 'ts_code',
+          'security_type', 'list_date', 'delist_date'}
+ENVELOPE_FIELDS = {'data', 'items', 'total', 'as_of', 'code', 'message', 'success'}
+TICKER = re.compile(r'([0-9]{6})(\.[A-Z]{2})')
+MARKET_LABELS = {
+    '主板': '主板', 'main board': '主板',
+    '创业板': '创业板', 'chinext': '创业板',
+    '北交所': '北交所', 'beijing stock exchange': '北交所',
+    '科创板': '科创板', 'star market': '科创板',
+}
+
+
+def text(value):
+    return value.strip() if isinstance(value, str) else ''
+
+
+def response_shape(payload, items, venue):
+    from collections import Counter
+
+    keys = set().union(*(row.keys() for row in items if isinstance(row, dict)))
+    top = set(payload) if isinstance(payload, dict) else set()
+    suffix = '.SZ' if venue == 'SZSE' else '.BJ'
+    formats, markets, statuses, invalid = Counter(), Counter(), Counter(), Counter()
+    for row in items:
+        if not isinstance(row, dict):
+            invalid['record'] += 1
+            continue
+        symbol = text(row.get('symbol'))
+        board = MARKET_LABELS.get(text(row.get('market')).casefold())
+        status = text(row.get('list_status'))
+        exchange = text(row.get('exchange')).upper()
+        formats['suffixed' if TICKER.fullmatch(symbol) else
+                'bare' if re.fullmatch(r'[0-9]{6}', symbol) else 'invalid'] += 1
+        markets[board or ('OTHER' if row.get('market') else 'MISSING')] += 1
+        statuses[status if status in {'L', 'D', 'P'} else ('OTHER' if status else 'MISSING')] += 1
+        for field, valid in {
+            'symbol': bool(TICKER.fullmatch(symbol)) and symbol.endswith(suffix),
+            'name': bool(text(row.get('name'))),
+            'market': board in MARKETS[venue],
+            'list_status': status == 'L',
+            'exchange': exchange in ({'SZSE', 'SZ'} if venue == 'SZSE' else {'', 'BSE', 'BJ'}),
+            'ts_code': 'ts_code' not in row or row['ts_code'] == symbol,
+            'security_type': row.get('security_type') in (None, 'EQUITY', 'COMMON_EQUITY'),
+            'delist_date': not row.get('delist_date'),
+        }.items():
+            invalid[field] += int(not valid)
+    return dict(top_level_fields=sorted(top & ENVELOPE_FIELDS), other_top_level_fields=len(top - ENVELOPE_FIELDS),
+                item_fields=sorted(keys & FIELDS), other_item_fields=len(keys - FIELDS), returned_rows=len(items),
+                symbol_formats=dict(formats), market_counts=dict(markets), listing_status_counts=dict(statuses),
+                invalid_counts=dict(invalid),
+                null_or_missing_counts={key: sum(not isinstance(row, dict) or row.get(key) in (None, '')
+                                                 for row in items) for key in sorted(FIELDS)})
+
+
 def parse_reference(raw, venue, today=None):
     today = today or datetime.now(ZoneInfo('Asia/Shanghai')).date()
+    stage = 'JSON'
+    shape = {}
     try:
         payload = json.loads(raw)
+        stage = 'ENVELOPE'
         envelope = payload if isinstance(payload, dict) else {}
         items = envelope.get('data', payload)
         metadata = items if isinstance(items, dict) else {}
         items = metadata.get('items', items)
+        shape = response_shape(payload, items if isinstance(items, list) else [], venue)
         if not isinstance(items, list):
             raise ValueError
+        stage = 'PROVIDER_TOTAL_OR_DATE'
         total = metadata.get('total', envelope.get('total'))
         as_of = metadata.get('as_of', envelope.get('as_of'))
         if as_of is not None:
@@ -39,17 +98,33 @@ def parse_reference(raw, venue, today=None):
         counts = dict.fromkeys((label for label, _ in MARKETS[venue].values()), 0)
         rows, seen, excluded = [], set(), 0
         for item in items:
-            code, name, board, status = (item[key] for key in ('symbol', 'name', 'market', 'list_status'))
-            exchange = item.get('exchange')
-            if not re.fullmatch(r'[0-9]{6}', code) or not name.strip() or status != 'L':
-                raise ListingError('SOURCE_CONFLICT', 'Invalid identifier, name or active listing status')
+            stage = 'RECORD_FIELDS'
+            symbol, name, board, status = (item[key] for key in ('symbol', 'name', 'market', 'list_status'))
+            stage = 'SYMBOL_SUFFIX'
+            match = TICKER.fullmatch(text(symbol))
+            if not match or match[2] != suffix:
+                raise ListingError('SOURCE_CONFLICT', 'Expected the requested exchange suffix in QuantSonar symbol')
+            code = match[1]
+            stage = 'COMPANY_NAME'
+            if not text(name):
+                raise ListingError('SOURCE_CONFLICT', 'Missing QuantSonar company name')
+            stage = 'LISTING_STATUS'
+            if status != 'L' or item.get('delist_date'):
+                raise ListingError('SOURCE_CONFLICT', 'QuantSonar row does not assert active listing')
+            stage = 'DUPLICATE_IDENTIFIER'
             if code in seen:
                 raise ListingError('SOURCE_CONFLICT', 'Duplicate QuantSonar security identifier')
             seen.add(code)
-            if (exchange != 'SZSE' if venue == 'SZSE' else exchange not in {None, '', 'BSE'}):
+            stage = 'EXCHANGE_MEMBERSHIP'
+            exchange = item.get('exchange')
+            if exchange is not None and not isinstance(exchange, str):
+                raise ValueError
+            if text(exchange).upper() not in ({'SZSE', 'SZ'} if venue == 'SZSE' else {'', 'BSE', 'BJ'}):
                 raise ListingError('SOURCE_CONFLICT', 'QuantSonar exchange field conflicts with requested scope')
-            if 'ts_code' in item and item['ts_code'] != code + suffix:
+            if 'ts_code' in item and item['ts_code'] != symbol:
                 raise ListingError('SOURCE_CONFLICT', 'QuantSonar suffixed identifier does not match requested scope')
+            stage = 'BOARD_CLASSIFICATION'
+            board = MARKET_LABELS.get(text(board).casefold())
             if board not in MARKETS[venue]:
                 raise ListingError('SOURCE_CONFLICT', 'QuantSonar board does not match requested scope')
             label, pattern = MARKETS[venue][board]
@@ -57,16 +132,18 @@ def parse_reference(raw, venue, today=None):
             if not re.fullmatch(pattern, code) or (kind is not None and kind not in {'EQUITY', 'COMMON_EQUITY'}):
                 excluded += 1
                 continue
-            row = _market_row(code + suffix, name.strip(), 'China', URL)
+            row = _market_row(symbol.strip(), name.strip(), 'China', URL)
             row['security_type_status'] = 'THIRD_PARTY_EQUITY_REQUIRES_VENDOR_CONFIRMATION'
             rows.append(row)
             counts[label] += 1
+        stage = 'REQUIRED_BOARD_COVERAGE'
         if not all(counts.values()):
             raise ListingError('INCOMPLETE_OR_STALE_SOURCE', 'QuantSonar returned no qualifying rows for a required board')
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
-        if isinstance(exc, ListingError):
-            raise
-        raise ListingError('SCHEMA_DRIFT', 'QuantSonar response did not match the guarded reference contract') from None
+        failure = exc if isinstance(exc, ListingError) else ListingError(
+            'SCHEMA_DRIFT', 'QuantSonar response did not match the guarded reference contract')
+        failure.diagnostics = dict(shape, validation_stage=stage)
+        raise failure from None
     return rows, dict(received=len(items), rejected_non_equity=excluded,
                       scope=', '.join(counts), scope_counts=json.dumps(counts), source_url=URL,
                       source_asof=str(as_of) if as_of else '', source_sha256=sha256(raw).hexdigest(),
@@ -94,7 +171,8 @@ def fetch_quantsonar(venue, key, session=requests):
                     raise ListingError('RESPONSE_LIMIT', 'QuantSonar response exceeded read bounds')
         rows, details = parse_reference(raw, venue)
     except ListingError as exc:
-        exc.diagnostics = {'http_status': status}
+        exc.diagnostics = {'validation_stage': 'HTTP_OR_READ', **getattr(exc, 'diagnostics', {}),
+                           'http_status': status}
         raise
     except requests.exceptions.ProxyError:
         raise ListingError('PROXY_FORBIDDEN', 'QuantSonar proxy connection failed') from None
