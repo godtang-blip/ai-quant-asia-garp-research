@@ -61,10 +61,10 @@ def test_balanced_sample_avoids_country_monopoly():
 
 def test_discovery_sources_report_actual_failures_no_guessed_fallback(monkeypatch):
     base=pd.DataFrame([{'ticker':'005930.KS','company':'Samsung','market':'Korea','peer_group':'chip_manufacturing','industry_thesis':'curated'}])
-    monkeypatch.setattr(d,'source_nikkei225',lambda: [{'ticker':'6758.T','company':'Sony','market':'Japan','peer_group':'unclassified'}])
+    monkeypatch.setattr(d,'source_nikkei225',lambda: [{'ticker':'6758.T','company':'Sony','market':'Japan','peer_group':'unclassified','discovery_source':'https://indexes.nikkei.co.jp/'}])
     def vendor(market,max_rows):
         if market=='China':raise RuntimeError('vendor unavailable')
-        return ([{'ticker':'005930.KS','company':'dupe','market':'Korea','peer_group':'unclassified'}] if market=='Korea' else []),{'market':market}
+        return ([{'ticker':'005930.KS','company':'dupe','market':'Korea','peer_group':'unclassified','discovery_source':'Yahoo fixture'}] if market=='Korea' else []),{'market':market}
     monkeypatch.setattr(d,'source_region',vendor)
     combined,log=d.discover_five_markets(base,'all5',20)
     assert len(combined)==2 and '6758.T' in set(combined.ticker)

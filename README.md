@@ -10,6 +10,17 @@
 
 **Important: This version upgrades research *process auditing*, not demonstrated stock-picking quality.** Its new quality tests cannot establish predictive power or future return outperformance.
 
+## Five-market coverage follow-up
+
+The `all5_official` workflow now supports dated exchange exports alongside the
+live JPX, TWSE, and optional KRX connectors. The fetch cap reserves research space for each market before assigning the
+remaining slots by available ticker count. The coverage audit reports listing membership,
+vendor financial availability, and screening eligibility separately. See the
+[coverage audit, source matrix, and export instructions](docs/FIVE_MARKET_COVERAGE.md).
+The market-only investigation queue is exported separately in
+`46_market_stratified_research_queue.csv`. The history below describes each
+original release and its observed results.
+
 ## Version History — Problems Encountered, Why They Mattered, and What Changed
 
 This project did not begin as a finished investment model with known answers. It evolved by **documenting observed failures, sampling biases, and gaps in evidence verification**, then adjusting the research process in response. The figures and validation status below refer to the observations or implementations available at each release. Changes in scores or universe size **must not be interpreted as improved investment returns**.

@@ -13,6 +13,9 @@ import pandas as pd
 import requests
 
 JPX_XLSX = 'https://www.jpx.co.jp/english/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_e.xlsx'
+JPX_XLS = JPX_XLSX.removesuffix('x')
+JPX_JAPANESE_XLS = 'https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls'
+JPX_CODE = r'[0-9][0-9ACDFGHJKLMNPRSTUWXY][0-9][0-9ACDFGHJKLMNPRSTUWXY]'
 TWSE_JSON = 'https://openapi.twse.com.tw/v1/opendata/t187ap03_L'
 KRX_API = 'https://apis.data.go.kr/1160100/GetKrxListedInfoService_V2/getItemInfo_V2'
 
@@ -44,7 +47,7 @@ def _jpx_columns(columns) -> dict[str, object] | None:
     code=find(['Local Code','Issue Code','Securities Code','銘柄コード','コード','Code'],forbid=['industry','sector','業種','topix','分類'])
     name=find(['Name (English)','Company Name','Issue Name','銘柄名','会社名','Name'],forbid=['industry','sector','業種','分類'])
     segment=find(['Market/Products','Market and Products','Market Segment','Market Category',
-                  'Market/Product','Market Division','市場・商品区分','市場区分','市場商品区分',
+                  'Market/Product','Section/Products','Market Division','市場・商品区分','市場区分','市場商品区分',
                   '上場市場','Market'],forbid=['capitalization','時価総額'])
     return {'code':code,'name':name,'segment':segment} if all(v is not None for v in (code,name,segment)) else None
 
@@ -74,37 +77,48 @@ def _jpx_locate_table(frame:pd.DataFrame) -> tuple[pd.DataFrame,dict]:
     raise ValueError('JPX schema/header unrecognized (fail closed); observed headers: '+description)
 
 
-def parse_jpx_table(frame:pd.DataFrame) -> list[dict]:
+def parse_jpx_table(frame:pd.DataFrame, source: str = JPX_XLSX) -> list[dict]:
     """Parse domestic Prime/Standard/Growth equity candidates; no ETF/REIT guesswork."""
     df,found=_jpx_locate_table(frame)
     code,name,segment=(found[k] for k in ('code','name','segment'))
     result={}
     for _,r in df.iterrows():
-        token=str(r[code]).strip()
+        token=str(r[code]).strip().upper()
         if token.endswith('.0'):token=token[:-2]
         title=str(r[name]).strip()
         typ=str(r[segment]).lower()
-        if not re.fullmatch(r'[0-9]{4}',token) or not title or title.lower()=='nan':continue
+        if not re.fullmatch(JPX_CODE,token) or not title or title.lower()=='nan':continue
         # EXPLICIT segment match; English/Japanese aliases. Reject broad 'Tokyo' etc.
         domestic=any(s in typ for s in ('prime','standard','growth','プライム','スタンダード','グロース'))
         if not domestic:continue
         if any(s in typ for s in ('etf','etn','reit','fund','preferred','foreign','investment trust',
                                   'infrastructure','投資信託','外国','優先','pro market')):continue
-        result[token+'.T']=_market_row(token+'.T',title,'Japan',JPX_XLSX)
+        result[token+'.T']=_market_row(token+'.T',title,'Japan',source)
     if not result:raise ValueError('JPX parsed table contained no eligible domestic equity rows')
     return list(result.values())
 
 
 def source_jpx_list(session=None) -> list[dict]:
     sess=session or requests
-    reply=sess.get(JPX_XLSX,timeout=35,headers={'User-Agent':'AsiaGARPResearch/0.5.1'})
-    reply.raise_for_status()
-    if len(reply.content)>15_000_000:raise ValueError('JPX file exceeds permitted size')
-    data=BytesIO(reply.content)
-    # Monthly JPX Excel files can contain introductory title rows above column names.
-    # header=None ensures their content can be inspected without losing preamble rows.
-    frame=pd.read_excel(data,header=None,dtype=str,engine='openpyxl')
-    return parse_jpx_table(frame)
+    failures = []
+    for url in (JPX_XLS, JPX_JAPANESE_XLS, JPX_XLSX):
+        try:
+            reply = sess.get(url, timeout=35, headers={'User-Agent': 'AsiaGARPResearch/0.5.1'})
+            reply.raise_for_status()
+            content = reply.content
+            if len(content) > 15_000_000:
+                raise ValueError('JPX file exceeds permitted size')
+            if content.startswith(b'PK\x03\x04'):
+                engine = 'openpyxl'
+            elif content.startswith(bytes.fromhex('d0cf11e0a1b11ae1')):
+                engine = 'xlrd'
+            else:
+                raise ValueError('JPX response is not an Excel workbook')
+            frame = pd.read_excel(BytesIO(content), header=None, dtype=str, engine=engine)
+            return parse_jpx_table(frame, url)
+        except Exception as exc:
+            failures.append(f"{url.rsplit('/', 1)[-1]}: {exc}")
+    raise ValueError('All JPX workbook variants failed: ' + '; '.join(failures))
 
 
 def parse_twse_list(payload) -> list[dict]:
@@ -170,9 +184,13 @@ def source_krx_list(service_key:str,bas_dt:str,session=None)->list[dict]:
     sess=session or requests
     output={};page=1;max_pages=15;total=None
     while page<=max_pages:
-        response=sess.get(KRX_API,params={'serviceKey':service_key,'basDt':bas_dt,
-             'resultType':'json','numOfRows':1000,'pageNo':page},timeout=30)
-        response.raise_for_status()
+        try:
+            response=sess.get(KRX_API,params={'serviceKey':service_key,'basDt':bas_dt,
+                 'resultType':'json','numOfRows':1000,'pageNo':page},timeout=30)
+        except requests.RequestException as exc:
+            raise ValueError(f'KRX request failed: {type(exc).__name__}') from None
+        if not response.ok:
+            raise ValueError(f'KRX official API HTTP {response.status_code}')
         payload=response.json()
         body=(payload.get('response',{}) or {}).get('body',{}) if isinstance(payload,dict) else {}
         count=int(body.get('totalCount',0) or 0) if isinstance(body,dict) else 0
@@ -199,16 +217,16 @@ OFFICIAL_SOURCE_REGISTRY = [
      'implementation':'AUTOMATED_IF_KEY_CONFIGURED',
      'note':'Requires authorized PUBLIC_DATA_API_KEY and valid KRX_BASE_DATE (YYYYMMDD), holidays may need override'},
     {'market':'Japan','source':'JPX monthly issued securities XLSX',
-     'url':JPX_XLSX,'implementation':'AUTOMATED_SUPPLEMENTAL',
-     'note':'Domestic equity classes with numeric 4-digit codes; others excluded pending parser extension'},
+     'url':JPX_XLS,'implementation':'AUTOMATED_SUPPLEMENTAL',
+     'note':'Domestic equity classes with supported numeric and alphanumeric security codes'},
     {'market':'China','source':'SSE/SZSE issuer lists',
-     'url':'https://www.sse.com.cn/','implementation':'NOT_CONNECTED',
-     'note':'No verified fully accessible publisher listing adapter'},
+     'url':'https://www.sse.com.cn/','implementation':'LOCAL_PUBLISHER_EXPORT_SUPPORTED',
+     'note':'SSE, SZSE and BSE exports can be imported; direct listing retrieval is not connected'},
     {'market':'Hong Kong','source':'HKEX securities lists',
      'url':'https://www.hkex.com.hk/Services/Trading/Securities/Securities-Lists?sc_lang=en',
-     'implementation':'NOT_CONNECTED',
-     'note':'Listing file parsing and issuer/security-type auditing not implemented'},
+     'implementation':'LOCAL_PUBLISHER_EXPORT_SUPPORTED',
+     'note':'HKEX export can be imported; direct listing retrieval is not connected'},
     {'market':'Taiwan','source':'TWSE open data: listed company information',
      'url':TWSE_JSON,'implementation':'AUTOMATED_SUPPLEMENTAL',
-     'note':'TWSE listing only; Taipei Exchange (TPEx) OTC not included'},
+     'note':'TWSE live listing; Taipei Exchange (TPEx) files can be imported separately'},
 ]

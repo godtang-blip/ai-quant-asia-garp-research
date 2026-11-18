@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from .official_universe import OFFICIAL_SOURCE_REGISTRY
+from .quality_v051 import SOURCE_KEYS
 from .v031 import run as run_v031
 from .research_quality import enhance
 
@@ -27,24 +28,23 @@ def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_of
                    snapshot_csv,per_region,evidence_mode,evidence_limit)
     # Market registry is not a claim of downloaded/universal coverage.
     logs=pd.read_csv(output/'12_discovery_sources_log.csv',keep_default_na=False)
-    discovered=set(logs.loc[logs.status.eq('OK'),'source'].astype(str))
     rows=[]
     for source in OFFICIAL_SOURCE_REGISTRY:
         entry=source.copy()
-        key={'Korea':'official_krx_listed_issues',
-             'Japan':'official_jpx_full_listing',
-             'Taiwan':'official_twse_listed_companies'}.get(entry['market'],'')
-        entry['retrieval_status']='OK' if key in discovered else (
-            'NOT_CONFIGURED_AUTH_REQUIRED' if entry['market']=='Korea' and
-               'NOT_CONFIGURED_AUTH_REQUIRED' in set(logs.loc[logs.source.eq(key),'status']) else
-            'FAILED_OR_NOT_REQUESTED' if key and discover_mode=='all5_official' else 'NOT_CONNECTED')
+        key=SOURCE_KEYS[entry['market']]
+        live=logs.loc[logs.source.eq(key), 'status']
+        exports=logs.loc[logs.market.eq(entry['market']) & logs.source_kind.eq('PUBLISHER_EXPORT')
+                         & logs.status.eq('OK'), 'source']
+        entry['retrieval_status']=live.iloc[0] if len(live) else (
+            'NOT_REQUESTED' if discover_mode != 'all5_official' else 'NO_LIVE_ADAPTER')
+        entry['publisher_exports_imported']='|'.join(exports)
         rows.append(entry)
     pd.DataFrame(rows).to_csv(output/'36_official_exchange_source_registry.csv',index=False,encoding='utf-8-sig')
     # Replay must not use primary reviews submitted AFTER the hypothetical snapshot.
     apply_reviews=not snapshot_csv or asof_date is not None
     quality=enhance(output,universe.parent,asof_date=asof_date,enable_reviews=apply_reviews)
     meta.update(pipeline_revision='0.5',quality_gate=quality,
-                official_source_coverage='JPX_TWSE_SUPPLEMENTAL_KRX_OPTIONAL_CN_HK_NOT_CONNECTED')
+                official_source_coverage='LIVE_SUPPLEMENTAL_AND_VALIDATED_EXPORTS_SEE_SOURCE_LOG')
     (output/'37_v05_run_manifest.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding='utf-8')
     print('v0.5 quality audit: '+json.dumps({k:quality[k] for k in ('screened_n',
           'evidence_checked_n','valuation_reviewed_n','memo_ready_n')},ensure_ascii=False),flush=True)
