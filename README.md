@@ -29,6 +29,8 @@ A subsequent reported smoke test discovered **8,489 securities**, with live retr
 
 A later reported Actions run discovered **11,052 securities**, including **2,590 from Korea KIND**. Mainland China still had no successful live listing source. SSE and BSE returned HTTP 403, and SZSE's workbook reset its connection before the JSON fallback returned HTTP 500.
 
+The next reported listing-only Actions run discovered **11,051 securities**, with zero new mainland China listings. SSE Main Board and STAR failed pagination validation, SZSE failed on both routes, BSE returned HTTP 403, and BaoStock timed out. The current branch uses AKShare's observed SSE request shape with strict publisher-total checks and bounded response diagnostics. That change is fixture-tested. Its live response remains unverified. BaoStock now checks its TCP endpoint before starting the SDK. [SSE diagnostics and fallback findings](docs/CHINA_A_SHARE_DISCOVERY.md#sse-pagination-follow-up)
+
 The HKEX adapter keeps its existing Main Board and GEM equity category filters. It preserves separate share classes and trading counters, including different currency counters with different security codes. The 2,781 figure counts accepted security codes. An issuer can contribute several codes. The source log now reports workbook exclusions by category and subcategory, separately from duplicate rows and invalid symbols.
 
 ## Current Status and Remaining Limitations

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 from zoneinfo import ZoneInfo
@@ -11,7 +12,8 @@ from zoneinfo import ZoneInfo
 from .official_universe import _market_row
 from .venue_sources import ListingError
 
-ENDPOINT = 'tcp://public-api.baostock.com:10030'
+HOST, PORT = 'public-api.baostock.com', 10030
+ENDPOINT = f'tcp://{HOST}:{PORT}'
 PROVIDER_URL = 'http://www.baostock.com/'
 BOARDS = {
     'sh': ('.SS', r'(?:600|601|603|605|688|689)\d{3}'),
@@ -115,6 +117,34 @@ def validated_rows(data, today=None):
     }
 
 
+def tcp_preflight():
+    try:
+        probe = subprocess.run([sys.executable, '-m', 'src.china_security_master', '--tcp-probe'],
+                               capture_output=True, timeout=8, check=False, text=True)
+    except subprocess.TimeoutExpired:
+        raise ListingError('TCP_PROBE_TIMEOUT', 'BaoStock TCP preflight exceeded 8 seconds') from None
+    if probe.returncode:
+        category = {
+            'TIMEOUT': 'TCP_CONNECT_TIMEOUT', 'REFUSED': 'TCP_CONNECT_REFUSED',
+            'DNS_ERROR': 'TCP_DNS_FAILURE', 'NETWORK_ERROR': 'TCP_UNREACHABLE',
+        }.get(probe.stdout.strip(), 'TCP_PROBE_FAILED')
+        raise ListingError(category, f'BaoStock TCP preflight failed for {HOST}:{PORT}')
+
+
+def probe_endpoint():
+    try:
+        with socket.create_connection((HOST, PORT), timeout=5):
+            return 'OK'
+    except TimeoutError:
+        return 'TIMEOUT'
+    except ConnectionRefusedError:
+        return 'REFUSED'
+    except socket.gaierror:
+        return 'DNS_ERROR'
+    except OSError:
+        return 'NETWORK_ERROR'
+
+
 def fetch_baostock():
     from hashlib import sha256
 
@@ -123,11 +153,12 @@ def fetch_baostock():
         with Path(snapshot).open('rb') as stream:
             raw = stream.read(24_000_001)
     else:
+        tcp_preflight()
         try:
             result = subprocess.run([sys.executable, '-m', 'src.china_security_master'],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=65, check=False)
         except subprocess.TimeoutExpired:
-            raise ListingError('TIMEOUT', 'BaoStock native SDK exceeded 65 seconds') from None
+            raise ListingError('TIMEOUT', 'BaoStock TCP reachable; native SDK exceeded 65 seconds') from None
         if result.returncode:
             detail = result.stderr.decode(errors='replace').strip().splitlines()
             raise ListingError('SOURCE_UNAVAILABLE', detail[-1] if detail else 'BaoStock SDK failed')
@@ -147,6 +178,11 @@ def fetch_baostock():
 
 if __name__ == '__main__':
     from contextlib import redirect_stdout
+
+    if sys.argv[1:] == ['--tcp-probe']:
+        status = probe_endpoint()
+        print(status)
+        sys.exit(status != 'OK')
 
     try:
         with redirect_stdout(sys.stderr):

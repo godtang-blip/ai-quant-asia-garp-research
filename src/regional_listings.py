@@ -25,7 +25,7 @@ ROUTES = {
     'BSE': ('China', BSE, 'BSE listed securities table; excludes NEEQ-only listings'),
 }
 SYMBOLS = {'KIND_KOSPI': (r'\d{6}', '.KS'), 'KIND_KOSDAQ': (r'\d{6}', '.KQ'),
-           'SSE': (r'6\d{5}', '.SS'), 'SSE_STAR': (r'68\d{4}', '.SS'), 'SZSE_JSON': (r'[03]\d{5}', '.SZ'),
+           'SSE': (r'(?:600|601|603|605)\d{3}', '.SS'), 'SSE_STAR': (r'68\d{4}', '.SS'), 'SZSE_JSON': (r'[03]\d{5}', '.SZ'),
            'BSE': (r'(?:4\d|8\d|92)\d{4}', '.BJ')}
 
 
@@ -58,16 +58,65 @@ def json_document(raw):
     return json.loads(wrapped[1] if wrapped else text)
 
 
+def sse_metadata(payload, page):
+    """Log allowlisted key names and integer metadata, never response rows."""
+    known_keys = {'result', 'pageHelp', 'data', 'pageCount', 'total', 'pageNo',
+                  'pageSize', 'beginPage', 'endPage', 'cacheSize', 'success', 'error'}
+    root = payload if isinstance(payload, dict) else {}
+    value = root.get('pageHelp')
+    meta = value if isinstance(value, dict) else {}
+    records = root.get('result', meta.get('data'))
+    fields = (set(root) | set(meta)) - known_keys
+    return {
+        'requested_page': page,
+        'response_fields': sorted(set(root) & known_keys),
+        'pagination_fields': sorted(set(meta) & known_keys),
+        'other_field_count': len(fields),
+        'row_container': 'result' if 'result' in root else 'pageHelp.data',
+        'returned_rows': len(records) if isinstance(records, list) else None,
+        'reported_page_count': safe_integer(meta.get('pageCount')),
+        'reported_total_rows': safe_integer(meta.get('total')),
+        'reported_page': safe_integer(meta.get('pageNo')),
+        'reported_page_size': safe_integer(meta.get('pageSize')),
+    }
+
+
+def safe_integer(value):
+    if type(value) is int and 0 <= value <= 1_000_000:
+        return value
+    if isinstance(value, str) and re.fullmatch(r'[0-9]{1,6}', value):
+        return int(value)
+    return None
+
+
+def sse_page(venue, session, page):
+    from .venue_sources import ListingError
+
+    raw = download(session, 'get', SSE, headers={'Referer': SSE_PAGE}, params={
+        'sqlId': 'COMMON_SSE_CP_GPJCTPZ_GPLB_GP_L',
+        'STOCK_TYPE': '8' if venue == 'SSE_STAR' else '1',
+        'COMPANY_STATUS': '2,4,5,7,8', 'type': 'inParams',
+        'REG_PROVINCE': '', 'CSRC_CODE': '', 'STOCK_CODE': '',
+        'isPagination': 'true', 'pageHelp.cacheSize': 1, 'pageHelp.pageSize': 10000,
+        'pageHelp.pageNo': page, 'pageHelp.beginPage': page, 'pageHelp.endPage': page,
+    })
+    try:
+        payload = json_document(raw)
+    except (UnicodeError, ValueError) as exc:
+        error = ListingError('SCHEMA_DRIFT', 'SSE did not return JSON')
+        error.diagnostics = {'requested_page': page, 'reason': 'NON_JSON'}
+        raise error from exc
+    diagnostics = sse_metadata(payload, page)
+    meta = payload.get('pageHelp') if isinstance(payload, dict) else None
+    if not isinstance(meta, dict):
+        error = ListingError('INCOMPLETE_PAGINATION', 'SSE pagination metadata is absent')
+        error.diagnostics = dict(diagnostics, reason='MISSING_PAGE_METADATA')
+        raise error
+    items = payload.get('result', meta.get('data'))
+    return raw, items, diagnostics['reported_page_count'], diagnostics['reported_total_rows'], diagnostics
+
+
 def china_page(venue, session, page):
-    if venue in {'SSE', 'SSE_STAR'}:
-        raw = download(session, 'get', SSE, headers={'Referer': SSE_PAGE}, params={
-            'sqlId': 'COMMON_SSE_CP_GPJCTPZ_GPLB_GP_L', 'stockType': '8' if venue == 'SSE_STAR' else '1',
-            'isPagination': 'true', 'pageHelp.pageSize': 100, 'pageHelp.pageNo': page,
-            'pageHelp.beginPage': page, 'pageHelp.endPage': page,
-        })
-        data = json_document(raw)
-        meta = data['pageHelp']
-        return raw, meta['data'], int(meta['pageCount']), int(meta['total']), 'A_STOCK_CODE', 'COMPANY_ABBR'
     if venue == 'SZSE_JSON':
         raw = download(session, 'get', SZSE_REPORT, params={
             'SHOWTYPE': 'JSON', 'CATALOGID': '1110', 'TABKEY': 'tab1', 'PAGENO': page,
@@ -98,30 +147,71 @@ def fetch_regional(venue, session):
         records = []
         seen = set()
         expected = None
+        diagnostics = None
+        first_diagnostics = None
+        sse = venue in {'SSE', 'SSE_STAR'}
+
+        def reject(code, reason, message):
+            error = ListingError(code, message)
+            if diagnostics is not None:
+                error.diagnostics = dict(diagnostics, reason=reason, previously_received=len(records))
+            raise error
         for page in range(1, 101):
             if page > 1:
                 time.sleep(.25)
+            if sse:
+                raw, items, total_pages, total_rows, diagnostics = sse_page(venue, session, page)
+                code, name = 'A_STOCK_CODE', 'COMPANY_ABBR'
+                if first_diagnostics is None:
+                    first_diagnostics = diagnostics
+                if diagnostics['reported_page'] not in {None, page}:
+                    reject('INCOMPLETE_PAGINATION', 'PAGE_NUMBER_MISMATCH', 'SSE echoed a different page number')
+            else:
+                try:
+                    raw, items, total_pages, total_rows, code, name = china_page(venue, session, page)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise ListingError('SCHEMA_DRIFT', f'{venue} listing response has unexpected fields') from exc
+            if not isinstance(items, list):
+                reject('SCHEMA_DRIFT', 'MISSING_RESULT_ROWS', f'{venue} did not return an array of listing rows')
             try:
-                raw, items, total_pages, total_rows, code, name = china_page(venue, session, page)
-                if not isinstance(items, list):
-                    raise TypeError('Expected an array of exchange rows')
                 page_records = [(row[code], row[name], True) for row in items]
-            except (ValueError, KeyError, TypeError) as exc:
-                raise ListingError('SCHEMA_DRIFT', f'{venue} listing response has unexpected fields') from exc
+            except (KeyError, TypeError) as exc:
+                error = ListingError('SCHEMA_DRIFT', f'{venue} listing rows have unexpected fields')
+                if diagnostics is not None:
+                    error.diagnostics = dict(diagnostics, reason='MISSING_ROW_FIELDS')
+                raise error from exc
+            if not 1 <= (total_pages or 0) <= 100 or not total_rows:
+                reject('INCOMPLETE_PAGINATION', 'INVALID_TOTALS', f'{venue} returned empty or invalid totals')
+            if not items:
+                reject('INCOMPLETE_PAGINATION', 'EMPTY_PAGE', f'{venue} returned an empty listing page')
             if expected is None:
                 expected = (total_pages, total_rows)
+            elif expected != (total_pages, total_rows):
+                reject('INCOMPLETE_PAGINATION', 'CHANGED_TOTALS', f'{venue} reported different totals across pages')
             codes = {str(row[0]).strip() for row in page_records}
-            if (not 1 <= total_pages <= 100 or len(records) + len(items) > total_rows or not items or
-                    expected != (total_pages, total_rows) or len(codes) != len(items) or seen & codes):
-                raise ListingError('INCOMPLETE_PAGINATION', f'{venue} listing page totals or identities conflict')
+            if len(codes) != len(items) or seen & codes:
+                reject('INCOMPLETE_PAGINATION', 'REPEATED_IDENTITIES', f'{venue} returned repeated listing codes')
+            if len(records) + len(items) > total_rows:
+                reject('INCOMPLETE_PAGINATION', 'ROWS_EXCEED_PUBLISHER_TOTAL', f'{venue} exceeded its reported total')
             digest.update(raw)
             seen.update(codes)
             records.extend(page_records)
             if page == total_pages:
                 if len(records) != total_rows:
-                    raise ListingError('INCOMPLETE_PAGINATION', f'{venue} listing row count does not match publisher total')
+                    reject('INCOMPLETE_PAGINATION', 'FINAL_COUNT_MISMATCH',
+                           f'{venue} listing row count does not match publisher total')
                 break
-    rows, detail = parse_records(venue, records)
+    try:
+        rows, detail = parse_records(venue, records)
+    except ListingError as exc:
+        if venue in {'SSE', 'SSE_STAR'}:
+            exc.diagnostics = dict(diagnostics, reason='NO_VALID_BOARD_ROWS')
+        raise
+    if venue in {'SSE', 'SSE_STAR'}:
+        if detail['rejected_bad_symbol'] or detail['duplicate_rows']:
+            reject('INCOMPLETE_PAGINATION', 'INVALID_BOARD_OR_SYMBOL',
+                   f'{venue} returned codes outside the requested board or invalid listing records')
+        detail['response_diagnostics'] = {'first': first_diagnostics, 'last': diagnostics}
     detail['source_sha256'] = digest.hexdigest()
     if venue in {'SSE', 'SSE_STAR', 'SZSE_JSON', 'BSE'}:
         detail['completeness_check'] = 'PUBLISHER_PAGE_TOTALS_RECONCILED; NO_EXCHANGE_SCOPE_BENCHMARK'

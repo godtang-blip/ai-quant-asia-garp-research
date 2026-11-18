@@ -227,3 +227,44 @@ def test_szse_json_route_respects_workbook_access_denial(monkeypatch, failure, e
     discovery.discover_five_markets(pd.DataFrame([dict(ticker='005930.KS', market='Korea')]),
                                     'all5_official', 0)
     assert ('SZSE_JSON' in calls) is expected
+
+
+def test_sse_result_container_and_requested_board(monkeypatch):
+    monkeypatch.setattr('src.regional_listings.time.sleep', lambda _: None)
+    calls = []
+
+    def get(url, **kwargs):
+        params = kwargs['params']
+        calls.append(params)
+        page = params['pageHelp.pageNo']
+        payload = {'pageHelp': {'pageCount': '2', 'total': '2', 'pageNo': page,
+                                'pageSize': 1},
+                   'result': [{'A_STOCK_CODE': f'68800{page}', 'COMPANY_ABBR': 'Fixture'}]}
+        return response(json.dumps(payload).encode()).get()
+
+    rows, metadata = fetch_listing('SSE_STAR', SimpleNamespace(get=get))
+    assert [row['ticker'] for row in rows] == ['688001.SS', '688002.SS']
+    assert calls[0]['STOCK_TYPE'] == '8' and 'stockType' not in calls[0]
+    assert calls[0]['COMPANY_STATUS'] == '2,4,5,7,8'
+    assert calls[0]['type'] == 'inParams' and calls[0]['pageHelp.cacheSize'] == 1
+    assert metadata['response_diagnostics']['first']['row_container'] == 'result'
+    assert metadata['response_diagnostics']['last']['reported_page'] == 2
+
+
+@pytest.mark.parametrize(('meta', 'records', 'reason'), [
+    ({'pageCount': 1, 'total': 1, 'pageNo': 2}, [], 'PAGE_NUMBER_MISMATCH'),
+    ({'pageCount': 1, 'total': 1}, [], 'EMPTY_PAGE'),
+    ({'pageCount': 1, 'total': 2}, [{'A_STOCK_CODE':'600001','COMPANY_ABBR':'Do not log'}],
+     'FINAL_COUNT_MISMATCH'),
+    ({}, [], 'INVALID_TOTALS'),
+])
+def test_sse_errors_log_only_safe_metadata(meta, records, reason):
+    raw = json.dumps({'pageHelp': meta, 'result': records, 'unknown_secret': 'private value'}).encode()
+    with pytest.raises(ListingError) as exc:
+        fetch_listing('SSE', response(raw))
+    assert exc.value.code == 'INCOMPLETE_PAGINATION'
+    assert exc.value.diagnostics['reason'] == reason
+    assert exc.value.diagnostics['requested_page'] == 1
+    assert exc.value.diagnostics['returned_rows'] == len(records)
+    diagnostics = json.dumps(exc.value.diagnostics)
+    assert 'Do not log' not in diagnostics and 'private value' not in diagnostics and 'unknown_secret' not in diagnostics

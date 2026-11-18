@@ -191,11 +191,15 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                          unknown_classification=detail.get('unknown_classification', ''),
                          inactive_or_after_cutoff=detail.get('inactive_or_after_cutoff', ''),
                          completeness_check=detail.get('completeness_check', ''),
-                         retrieval_mode=detail.get('retrieval_mode', ''))
+                         retrieval_mode=detail.get('retrieval_mode', ''),
+                         response_diagnostics=json.dumps(detail['response_diagnostics'])
+                         if 'response_diagnostics' in detail else '')
         except Exception as exc:
             code = failure_code(exc)
             entry.update(status='FAILED_NO_FALLBACK', failure_code=code,
                          error=f'{type(exc).__name__}: {str(exc)[:250]}')
+            if hasattr(exc, 'diagnostics'):
+                entry['response_diagnostics'] = json.dumps(exc.diagnostics)
             if code in {'INCOMPLETE_OR_STALE_SOURCE', 'INCOMPLETE_PAGINATION'}:
                 entry['evidence_classification'] = 'INCOMPLETE_OR_STALE_SOURCE'
         logs.append(entry)
@@ -238,7 +242,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
     columns = ['source', 'status', 'received', 'accepted_pattern', 'rejected_non_equity',
                'rejected_bad_symbol', 'error', 'market', 'source_kind', 'source_url',
                'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows', 'excluded_by_category', 'identity_matches',
-               'evidence_classification', 'scope_counts', 'unknown_classification', 'completeness_check', 'retrieval_mode', 'inactive_or_after_cutoff']
+               'evidence_classification', 'scope_counts', 'unknown_classification', 'completeness_check', 'retrieval_mode', 'inactive_or_after_cutoff', 'response_diagnostics']
     log = pd.DataFrame(logs, columns=columns)
     for column in ('received', 'accepted_pattern', 'rejected_non_equity', 'rejected_bad_symbol'):
         log[column] = log[column].fillna(0).astype(int)

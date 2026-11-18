@@ -75,3 +75,22 @@ def test_official_failure_does_not_suppress_vendor_and_never_counts_as_official(
     venue = review_venues(universe, logs).set_index('venue').loc['SSE']
     assert venue.live_supported_n == 0 and venue.vendor_supported_n == 2
     assert universe.set_index('ticker').loc['600001.SS', 'listing_evidence_class'] == 'THIRD_PARTY_SECURITY_MASTER'
+
+
+def test_tcp_preflight_failure_avoids_sdk_attempt(monkeypatch):
+    from types import SimpleNamespace
+    from src import china_security_master as master
+
+    monkeypatch.delenv('GARP_BAOSTOCK_SNAPSHOT', raising=False)
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        assert kwargs['timeout'] == 8
+        return SimpleNamespace(returncode=1, stdout='DNS_ERROR\n')
+
+    monkeypatch.setattr(master.subprocess, 'run', run)
+    with pytest.raises(ListingError) as exc:
+        master.fetch_baostock()
+    assert exc.value.code == 'TCP_DNS_FAILURE'
+    assert len(calls) == 1 and calls[0][-1] == '--tcp-probe'
