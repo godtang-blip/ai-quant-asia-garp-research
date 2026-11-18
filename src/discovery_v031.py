@@ -13,6 +13,7 @@ import pandas as pd
 from .discovery import source_nikkei225
 from .official_universe import source_jpx_list, source_twse_list, source_krx_list, previous_weekday, JPX_CODE
 from .evidence import dart_stock_code_map
+from .china_vendor_exports import SOURCE as TUSHARE_URL, SOURCE_IDS, load_tushare_export
 from .china_security_master import ENDPOINT as BAOSTOCK_ENDPOINT, fetch_baostock
 from .venue_sources import SOURCES, fetch_listing, failure_code, observed_utc
 from .listing_exports import VENUES, load_listing_export
@@ -107,6 +108,11 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                        for venue, (market, _, _) in SOURCES.items())
         if security_master or os.environ.get('GARP_ENABLE_BAOSTOCK') == '1':
             sources.append(('baostock_security_master', 'China', 'THIRD_PARTY_SECURITY_MASTER', fetch_baostock))
+        vendor_directory = os.environ.get('GARP_TUSHARE_EXPORT_DIR')
+        if vendor_directory:
+            sources.extend((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
+                            lambda venue=venue: load_tushare_export(Path(vendor_directory)/f'{venue}.csv', venue))
+                           for venue, source_id in SOURCE_IDS.items())
         directory = os.environ.get('GARP_LISTING_EXPORT_DIR')
         for venue, (market, *_) in VENUES.items():
             path = Path(directory) / f'{venue}.csv' if directory else None
@@ -129,6 +135,8 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
             entry.update(source_url=BAOSTOCK_ENDPOINT,
                          scope='Active A-share master and dated provider inventory',
                          evidence_classification='THIRD_PARTY_SECURITY_MASTER')
+        if name in SOURCE_IDS.values():
+            entry.update(source_url=TUSHARE_URL, evidence_classification='THIRD_PARTY_SECURITY_MASTER')
         if name in official_china:
             entry['evidence_classification'] = 'OFFICIAL_EXCHANGE_LISTING'
         if name in mainland_exports:
@@ -168,7 +176,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                     continue
                 row = {**row, 'ticker': ticker}
                 row.setdefault('security_type_status', 'OFFICIAL_INDEX_TYPE_NEEDS_CONFIRMATION')
-                if name in official_china or name == 'baostock_security_master' or name in mainland_exports:
+                if name in official_china or kind == 'THIRD_PARTY_SECURITY_MASTER' or name in mainland_exports:
                     china_names.setdefault(ticker, {})[name] = row['company']
                     classification = entry.get('evidence_classification', 'PUBLISHER_EXPORT')
                     china_listing_evidence.setdefault(ticker, set()).add(classification)

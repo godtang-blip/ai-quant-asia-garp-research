@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .china_vendor_exports import SOURCE_IDS
 from .listing_exports import VENUES
 from .venue_sources import SOURCES
 
@@ -36,7 +37,8 @@ def review_venues(universe, logs, benchmarks=None):
         venue_rows = universe.market.eq(market) & universe.ticker.str.endswith(suffix)
         supported = venue_rows & membership.map(lambda ids: bool(set(sources).intersection(ids)))
         live_supported = venue_rows & membership.map(lambda ids: bool(successful_live.intersection(ids)))
-        vendor_supported = venue_rows & membership.map(lambda ids: 'baostock_security_master' in ids)
+        vendor_sources = {'baostock_security_master', *SOURCE_IDS.values()}
+        vendor_supported = venue_rows & membership.map(lambda ids: bool(vendor_sources.intersection(ids)))
         reference = references.get(venue, {})
         reference_source = reference.get('source_id')
         comparable = (reference and reference_source in successful_live and

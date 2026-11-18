@@ -61,6 +61,7 @@ jobs:
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
           GARP_ENABLE_BAOSTOCK: ${{ vars.GARP_ENABLE_BAOSTOCK }}
+          GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
           GARP_INPUT_EVIDENCE_MODE: ${{ inputs.evidence_mode }}
           GARP_INPUT_FX_MODE: ${{ inputs.fx_mode }}
@@ -84,6 +85,7 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
+          GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
         run: python -m src.discovery_smoke --output outputs
       - name: Require quality audit & zero autonomous trading

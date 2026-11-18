@@ -41,3 +41,29 @@ A direct request with the revised SSE filters to the official query endpoint was
 BaoStock now probes its published native TCP endpoint before starting the SDK. The probe has an eight-second subprocess deadline, including DNS, and distinguishes failed name resolution, connection refusal, network errors, and timeout. In this cloud the probe returned `DNS_ERROR`. Whether a GitHub runner can establish TCP remains unknown: a login or query timeout alone does not distinguish failed TCP from an unresponsive SDK session. Imported, dated snapshots do not perform the TCP probe.
 
 For independent fallback research, the previously tested AKShare methods still reuse exchange infrastructure. Tushare Pro's `stock_basic` is a candidate for authorized security-master access, subject to token entitlement and verified active-listing scope for SZSE and BSE. Its public documentation URL was blocked by the cloud proxy during this review, so no adapter or coverage claim was added. Use the existing dated, publisher-validated SZSE and BSE export paths when automated official sources are unavailable. Keep vendor data distinct from publisher exports. [Tushare candidate documentation](https://tushare.pro/document/2?doc_id=25)
+
+## SSE live verification and remaining SZSE/BSE gaps
+
+The latest reported discovery-only GitHub Actions run returned **13,370 unique securities**, including **2,320 mainland China securities**. SSE Main Board accepted **1,700** and STAR accepted **619**. Both publisher totals matched the accepted count on one complete page. The total mainland China count also includes one previously known security. This verifies live retrieval and response-level completeness for both SSE requests. It leaves exchange-scope completeness unverified. The current probe to the SSE market-statistics overview and STAR site was blocked with proxy CONNECT 403. An analyst with approved publisher access should use the same as-of date and compare Main Board A-share and STAR **listed securities** counts, avoiding B shares and separate issuer/market-cap series.
+
+| Route | Live observation | Action or open issue |
+|---|---|---|
+| SZSE Main Board and ChiNext | Actions workbook connection reset and JSON returned HTTP 500. Cloud official listing page blocked at CONNECT 403. | Use a dated publisher export, or a separately labeled authorized Tushare stock_basic export described below. |
+| BSE | Actions official endpoint returned HTTP 403. Cloud listing page blocked at CONNECT 403. | Use a dated publisher export or Tushare export with explicit BSE membership. NEEQ-only records are excluded. |
+| BaoStock | The latest Actions run established TCP then exceeded the old 65-second SDK deadline. The cloud listing-only run stopped at its TCP preflight. | Run discovery-only again and inspect the named SDK stage. A dated BaoStock snapshot still bypasses the live network path. |
+| Tushare Pro stock_basic | Public documentation and API host probes were blocked at CONNECT 403. No authorized account or actual export was available for validation here. | Use entitled access from an approved environment. The import schema is fixture-tested. Provider status, record scope and totals remain unverified with live data. |
+| Eastmoney and CNINFO | Public origin requests were blocked by the cloud proxy. | No independently verified export, listing scope, or automated access basis was established from these routes. |
+
+### Authorized Tushare export
+
+Use the provider's entitled `stock_basic` interface with separate `exchange=SZSE` and `exchange=BSE` queries and `list_status=L`. Before saving, confirm the provider's completed result, board definitions and date from its source, and retain the original response privately if the terms allow. Use `SZSE.csv` and `BSE.csv` with this header:
+
+```csv
+as_of,ts_code,symbol,name,exchange,market,list_status,list_date,delist_date
+```
+
+Use a single explicit snapshot date (`YYYY-MM-DD`) per file, and keep leading zeros in codes. Keep the provider's `YYYYMMDD` listing dates and leave `delist_date` blank for active records. Use the provider's board fields `主板`, `创业板`, or `北交所` as relevant. The importer requires both Shenzhen boards when importing Shenzhen, rejects mixed exchanges, mismatched ticker suffixes, duplicate codes and dates over seven days old, and separates inactive and unknown rows from accepted records. It validates the file's internal consistency and does not certify the provenance or completeness of an operator-supplied export.
+
+Point `GARP_TUSHARE_EXPORT_DIR` at the directory on an approved runner or local machine and use `discovery_only` (or `python -m src.discovery_smoke --output discovery-smoke`). In Actions the variable must refer to a directory available in the workspace. Transfer data or include it in a checkout only where the provider's terms permit. The workflow receives no Tushare credential. The two files are independent, so an unavailable or invalid export for one exchange leaves the other available. Results appear as `IMPORTED_VENDOR_SNAPSHOT` and third-party security master evidence. Inspect the snapshot date and hash in the source log and board counts in `scope_counts` before using them.
+
+BaoStock's one-shot Linux/macOS SDK worker now allows 8 seconds each for login and trading calendar, and 16 seconds each for security master and dated inventory, with a 52-second overall ceiling after TCP preflight. It makes no automatic retries. The log reports only the last permitted stage name on timeout or failure and omits raw SDK output.

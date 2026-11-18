@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -34,23 +35,48 @@ def sdk_rows(result):
     return records
 
 
+STAGE_TIMEOUTS = {'login': 8, 'calendar': 8, 'security_master': 16, 'dated_inventory': 16}
+
+
+class StageTimeout(BaseException):
+    pass
+
+
+def sdk_stage(stage, operation):
+    def timed_out(*_):
+        raise StageTimeout
+
+    print(f'BAOSTOCK_STAGE:{stage}', file=sys.stderr, flush=True)
+    previous = signal.signal(signal.SIGALRM, timed_out)
+    signal.setitimer(signal.ITIMER_REAL, STAGE_TIMEOUTS[stage])
+    try:
+        return operation()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def failed_stage(stderr):
+    events = re.findall(r'^BAOSTOCK_STAGE:([a-z_]+)$',
+                        (stderr or b'').decode(errors='replace'), re.M)
+    return events[-1] if events and events[-1] in STAGE_TIMEOUTS else 'unknown'
+
+
 def collect():
     import baostock as bs
 
     today = datetime.now(ZoneInfo('Asia/Shanghai')).date()
-    login = bs.login()
+    login = sdk_stage('login', bs.login)
     if login.error_code != '0':
         code = str(login.error_code)
         raise RuntimeError('BaoStock login error ' + (code if code.isdecimal() else 'UNKNOWN'))
-    try:
-        calendar = sdk_rows(bs.query_trade_dates(start_date=str(today - timedelta(days=14)),
-                                                 end_date=str(today - timedelta(days=1))))
-        as_of = max(row['calendar_date'] for row in calendar if row['is_trading_day'] == '1')
-        return {'provider': 'BaoStock', 'as_of': as_of,
-                'master': sdk_rows(bs.query_stock_basic()),
-                'snapshot': sdk_rows(bs.query_all_stock(as_of))}
-    finally:
-        bs.logout()
+    calendar = sdk_stage('calendar', lambda: sdk_rows(bs.query_trade_dates(
+        start_date=str(today - timedelta(days=14)), end_date=str(today - timedelta(days=1)))))
+    as_of = max(row['calendar_date'] for row in calendar if row['is_trading_day'] == '1')
+    master = sdk_stage('security_master', lambda: sdk_rows(bs.query_stock_basic()))
+    snapshot = sdk_stage('dated_inventory', lambda: sdk_rows(bs.query_all_stock(as_of)))
+    # This is a one-shot SDK worker. Process exit closes its socket.
+    return {'provider': 'BaoStock', 'as_of': as_of, 'master': master, 'snapshot': snapshot}
 
 
 def validated_rows(data, today=None):
@@ -156,12 +182,15 @@ def fetch_baostock():
         tcp_preflight()
         try:
             result = subprocess.run([sys.executable, '-m', 'src.china_security_master'],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=65, check=False)
-        except subprocess.TimeoutExpired:
-            raise ListingError('TIMEOUT', 'BaoStock TCP reachable; native SDK exceeded 65 seconds') from None
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=52, check=False)
+        except subprocess.TimeoutExpired as exc:
+            stage = failed_stage(exc.stderr)
+            raise ListingError('TIMEOUT', f'BaoStock worker deadline at stage {stage}') from None
         if result.returncode:
-            detail = result.stderr.decode(errors='replace').strip().splitlines()
-            raise ListingError('SOURCE_UNAVAILABLE', detail[-1] if detail else 'BaoStock SDK failed')
+            stage = failed_stage(result.stderr)
+            if result.returncode == 3:
+                raise ListingError('TIMEOUT', f'BaoStock SDK stage {stage} exceeded its deadline')
+            raise ListingError('SOURCE_UNAVAILABLE', f'BaoStock SDK failed at stage {stage}')
         raw = result.stdout
     if len(raw) > 24_000_000:
         raise ListingError('INCOMPLETE_OR_STALE_SOURCE', 'BaoStock snapshot exceeds byte ceiling')
@@ -189,6 +218,8 @@ if __name__ == '__main__':
             data = collect()
         validated_rows(data)
         print(json.dumps(data, ensure_ascii=False))
+    except StageTimeout:
+        sys.exit(3)
     except Exception as exc:
-        print(str(exc) if type(exc) is RuntimeError else type(exc).__name__, file=sys.stderr)
+        print(type(exc).__name__, file=sys.stderr)
         sys.exit(1)

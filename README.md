@@ -31,6 +31,10 @@ A later reported Actions run discovered **11,052 securities**, including **2,590
 
 The next reported listing-only Actions run discovered **11,051 securities**, with zero new mainland China listings. SSE Main Board and STAR failed pagination validation, SZSE failed on both routes, BSE returned HTTP 403, and BaoStock timed out. The current branch uses AKShare's observed SSE request shape with strict publisher-total checks and bounded response diagnostics. That change is fixture-tested. Its live response remains unverified. BaoStock now checks its TCP endpoint before starting the SDK. [SSE diagnostics and fallback findings](docs/CHINA_A_SHARE_DISCOVERY.md#sse-pagination-follow-up)
 
+The latest reported Actions listing-only run discovered **13,370 unique securities**, including **2,320 from mainland China**. SSE accepted **1,700 Main Board** and **619 STAR** securities. Both counts reconciled to their one-page publisher totals. An independent comparison against date- and scope-matched exchange statistics remains open.
+
+SZSE and BSE still lack verified live retrieval. An authorized, dated Tushare stock-basic export can now be imported for each independently and is recorded as third-party data. BaoStock now identifies a stalled SDK stage. [Remaining gaps and authorized import instructions](docs/CHINA_A_SHARE_DISCOVERY.md#sse-live-verification-and-remaining-szsebse-gaps)
+
 The HKEX adapter keeps its existing Main Board and GEM equity category filters. It preserves separate share classes and trading counters, including different currency counters with different security codes. The 2,781 figure counts accepted security codes. An issuer can contribute several codes. The source log now reports workbook exclusions by category and subcategory, separately from duplicate rows and invalid symbols.
 
 ## Current Status and Remaining Limitations

@@ -94,3 +94,16 @@ def test_tcp_preflight_failure_avoids_sdk_attempt(monkeypatch):
         master.fetch_baostock()
     assert exc.value.code == 'TCP_DNS_FAILURE'
     assert len(calls) == 1 and calls[0][-1] == '--tcp-probe'
+
+
+def test_stalled_worker_surfaces_only_allowlisted_stage(monkeypatch):
+    from types import SimpleNamespace
+    from src import china_security_master as master
+
+    monkeypatch.delenv('GARP_BAOSTOCK_SNAPSHOT', raising=False)
+    monkeypatch.setattr(master, 'tcp_preflight', lambda: None)
+    monkeypatch.setattr(master.subprocess, 'run', lambda *a, **kw: SimpleNamespace(
+        returncode=3, stderr=b'BAOSTOCK_STAGE:login\nBAOSTOCK_STAGE:dated_inventory\nsecret SDK detail'))
+    with pytest.raises(ListingError, match='dated_inventory') as exc:
+        master.fetch_baostock()
+    assert exc.value.code == 'TIMEOUT' and 'secret' not in str(exc.value)
