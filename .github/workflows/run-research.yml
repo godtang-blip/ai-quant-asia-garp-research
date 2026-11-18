@@ -1,4 +1,4 @@
-name: Asia GARP Research v0.2 — Manual Only
+name: Asia GARP Research v0.2.1 — Manual Only
 on:
   workflow_dispatch:
     inputs:
@@ -21,15 +21,15 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test selection, scoring and data triage
+      - name: Test selection, profitability screens and data-quality triage
         run: python -m pytest -q tests
-      - name: Run balanced multi-industry research (NO TRADES)
+      - name: Run research + evidence queue (NO TRADES)
         run: python -m src.screen --max-symbols "${{ inputs.max_symbols }}" --output outputs --delay-seconds 1.5
       - name: Upload reproducible results
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: asia-garp-research-v02-${{ github.run_id }}
+          name: asia-garp-research-v021-${{ github.run_id }}
           path: outputs/
           retention-days: 30
           if-no-files-found: error

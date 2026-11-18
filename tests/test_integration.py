@@ -42,3 +42,22 @@ def test_replay_marks_old_data(tmp_path):
     meta=screen.run(ufile,tmp_path/'outputs',max_symbols=0,snapshot_csv=snap)
     assert meta['data_mode']=='SNAPSHOT_REPLAY_NOT_LIVE'
     assert meta['universe_n']==6
+
+
+def test_prior_open_review_blocks_shortlist_not_manual_research(tmp_path, monkeypatch):
+    # Existing concern must remain visible, without pretending to know actual accuracy.
+    uni = pd.DataFrame([{'ticker':x,'company':x,'market':'KR','peer_group':'A','industry_thesis':'test'}
+                       for x in ['AA','BB','CC']])
+    ufile=tmp_path/'universe.csv';uni.to_csv(ufile,index=False)
+    pd.DataFrame([{'ticker':'BB','observation':'unreconciled YoY basis','required_manual_check':'filing','status':'OPEN'}]).to_csv(
+        tmp_path/'prior_discrepancies_to_review.csv',index=False)
+    def fake_pull(ticker):
+        return dict(revenue_growth=.2,earnings_growth=.2,operating_margin=.2,roe=.2,
+                    fcf_yield=.05,forward_pe=15,price_to_sales=3,
+                    info_warning='',currency='KRW',financial_currency='KRW')
+    monkeypatch.setattr(screen,'pull_ticker',fake_pull)
+    screen.run(ufile,tmp_path/'output',max_symbols=0,delay_seconds=0)
+    out=pd.read_csv(tmp_path/'output'/'01_all_research_candidates.csv').set_index('ticker')
+    assert not out.loc['BB','shortlist_eligible']
+    assert 'PRIOR_VENDOR_DISCREPANCY' in out.loc['BB','data_quality_flags']
+    assert out.loc['BB','rankable']

@@ -90,3 +90,42 @@ def test_balanced_12_and_24_from_curated():
 def test_negative_limit_rejected():
     u=pd.read_csv('data/universe.csv',dtype=str)
     with pytest.raises(ValueError):balanced_sample(u,-1)
+
+
+def test_currency_mismatch_is_coverage_note_not_blocking_flag():
+    d=fixture()
+    # Four peers: excluding one FCF value still leaves three comparable peers.
+    d=pd.concat([d,pd.DataFrame([{**d.iloc[1].to_dict(),'ticker':'Ad'}])],ignore_index=True)
+    d.loc[0,'fcf_yield']=float('nan')
+    d.loc[0,'info_warning']='FCF_YIELD_NOT_CALCULATED_CURRENCY_MISMATCH_OR_MISSING'
+    d.loc[0,'metric_period']='VENDOR_DEFINED_UNCONFIRMED'
+    r=rate_peer_universe(d).set_index('ticker')
+    assert r.loc['Aa','shortlist_eligible']
+    assert 'FCF_YIELD_NOT_CALCULATED' in r.loc['Aa','data_limitations']
+    assert r.loc['Aa','coverage_weight'] < r.loc['Ab','coverage_weight']
+
+
+def test_legacy_currency_warning_replay_is_not_blocked():
+    d=fixture()
+    d.loc[0,'fcf_yield']=float('nan')
+    d.loc[0,'info_warning']='Currency mismatch/missing: FCF yield unavailable'
+    r=rate_peer_universe(d).set_index('ticker')
+    assert r.loc['Aa','shortlist_eligible']
+
+
+def test_unprofitable_company_is_not_core_garp_shortlisted():
+    d=fixture()
+    d.loc[0,'operating_margin']=-.02
+    d.loc[0,'roe']=-.03
+    d.loc[0,'earnings_growth']=-.42
+    r=rate_peer_universe(d).set_index('ticker')
+    assert not r.loc['Aa','shortlist_eligible']
+    assert 'NON_POSITIVE_OPERATING_MARGIN' in r.loc['Aa','data_quality_flags']
+    assert 'EARNINGS_DECLINE' in r.loc['Aa','data_quality_flags']
+
+
+def test_split_reported_by_provider_requires_review():
+    d=fixture();d.loc[0,'split_recent']=True
+    r=rate_peer_universe(d).set_index('ticker')
+    assert not r.loc['Aa','shortlist_eligible']
+    assert 'RECENT_SHARE_SPLIT' in r.loc['Aa','data_quality_flags']

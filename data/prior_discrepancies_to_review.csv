@@ -1,4 +1,6 @@
 ticker,observation,required_manual_check,status
-8035.T,"v0.1 November 2026 forward PE 6.80; external estimates differed substantially; original filings and price/EPS timing not reconciled",Verify forecast EPS fiscal year and local quote/share split with dated source,OPEN
-6857.T,"v0.1 November 2026 forward PE 114.39; external estimates differed substantially",Verify forecast EPS time period share basis and consensus source,OPEN
-005930.KS,"v0.1 November 2026 forward PE 2.50 and reported revenue growth 126.8%; financial periods unconfirmed",Verify fiscal quarter growth basis forward EPS and valuation source,OPEN
+8035.T,v0.1 November 2026 forward PE 6.80; external estimates differed substantially; original filings and price/EPS timing not reconciled,Verify forecast EPS fiscal year and local quote/share split with dated source,OPEN
+6857.T,v0.1 November 2026 forward PE 114.39; external estimates differed substantially,Verify forecast EPS time period share basis and consensus source,OPEN
+005930.KS,v0.1 November 2026 forward PE 2.50 and reported revenue growth 126.8%; financial periods unconfirmed,Verify fiscal quarter growth basis forward EPS and valuation source,OPEN
+259960.KS,v0.2 vendor revenue growth 94.9%; another reported 2026 Q3 YoY measure differed; vendor period not established,Read dated company Q3 release and identify exact Yahoo measurement period before using growth in the valuation thesis,OPEN
+035420.KS,v0.2 vendor revenue growth 16.2%; another reported 2026 Q3 YoY measure differed; vendor period not established,Cross-check the vendor metric reporting period and dated NAVER earnings release; do not assume a data error,OPEN

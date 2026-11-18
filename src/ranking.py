@@ -53,8 +53,22 @@ def _warning(row):
         derived = price / feps
         if abs(derived - pe) / pe > 0.20:
             flags.append('PE_EPS_PRICE_INCONSISTENCY')
-    if str(row.get('info_warning', '')).strip() not in ('', 'nan', 'None'):
-        flags.append('PROVIDER_CURRENCY_OR_FIELD_WARNING')
+    # v0.2.1: a reporting/quote currency mismatch is a COVERAGE limit, not
+    # proof of an incorrect equity valuation. Never calculate FCF yield without FX.
+    warning = str(row.get('info_warning', '')).strip()
+    if warning not in ('', 'nan', 'None') and not (warning.startswith('FCF_YIELD_NOT_CALCULATED_') or warning.startswith('Currency mismatch/missing: FCF yield unavailable')):
+        flags.append('PROVIDER_FIELD_WARNING_REVIEW')
+    op_margin = valid_number(row.get('operating_margin'))
+    roe = valid_number(row.get('roe'))
+    if np.isfinite(op_margin) and op_margin <= 0:
+        flags.append('NON_POSITIVE_OPERATING_MARGIN_NOT_CORE_GARP')
+    if np.isfinite(roe) and roe <= 0:
+        flags.append('NON_POSITIVE_ROE_NOT_CORE_GARP')
+    if np.isfinite(eg) and eg < -0.30:
+        flags.append('EARNINGS_DECLINE_OVER_30PCT_REVIEW_CYCLICALITY')
+    recent = str(row.get('split_recent', '')).lower().strip()
+    if recent in ('true', '1'):
+        flags.append('RECENT_SHARE_SPLIT_VERIFY_PRICE_EPS_BASIS')
     return '|'.join(flags)
 
 
@@ -87,6 +101,13 @@ def rate_peer_universe(data: pd.DataFrame) -> pd.DataFrame:
         covered += usable * weight
     d['coverage_weight'] = np.round(covered, 6)
     d['data_quality_flags'] = d.apply(_warning, axis=1)
+    # Do not confuse non-blocking data limitations with verified/clean data.
+    d['data_limitations'] = d.apply(lambda row: '|'.join(filter(None, [
+        str(row.get('info_warning') or '') if str(row.get('info_warning') or '') not in ('nan','None') else '',
+        'GROWTH_PERIOD_VENDOR_UNCONFIRMED' if str(row.get('metric_period', 'VENDOR_DEFINED_UNCONFIRMED')) not in ('SYNTHETIC','VERIFIED_BY_ANALYST') else '',
+        'FCF_YIELD_MISSING' if not np.isfinite(valid_number(row.get('fcf_yield'))) else '',
+        'SHARE_SPLIT_HISTORY_NOT_INDEPENDENTLY_VERIFIED' if str(row.get('last_split_date_utc','')).strip().lower() in ('','nan','none') else '',
+    ])), axis=1)
     d['rankable'] = (d['completeness'] >= 5) & (d['peer_n'] >= 3) & (d['coverage_weight'] >= 0.65)
     # Normalize by ACTUALLY available metric weight; disclose coverage separately.
     d['exploratory_score_100'] = np.where(d['rankable'], 100 * weighted / np.maximum(covered, 1e-12), np.nan)
@@ -98,6 +119,7 @@ def rate_peer_universe(data: pd.DataFrame) -> pd.DataFrame:
         default='UNVERIFIED_RESEARCH_CANDIDATE',
     )
     d['source_verification'] = 'VENDOR_SNAPSHOT_NOT_VERIFIED_AGAINST_FILINGS'
+    d['filing_verification'] = 'NOT_PERFORMED'
     d = d.sort_values(['shortlist_eligible', 'rankable', 'exploratory_score_100', 'ticker'],
                       ascending=[False, False, False, True], na_position='last')
     return d.reset_index(drop=True)
