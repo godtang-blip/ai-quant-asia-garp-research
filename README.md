@@ -81,10 +81,6 @@ Core: `01_all_research_candidates.csv`, `02_research_shortlist.csv`, `03_researc
 
 New v0.3.1: `18_evidence_ledger.csv`, `19_news_headlines.csv`, `20_vendor_quarterly_earnings.csv`, `21_regulator_filings_index.csv`, `22_evidence_sources_log.csv`, `23_same_input_weight_sensitivity.csv`, `24_research_quality_audit.json`, `25_research_quality_audit.md`, `26_research_decisions.csv`, `27_evidence_book.md`, `28_decision_log_GUIDE.md`, `29_new_discovery_research_queue.csv`.
 
-## Defending the methodology in a PM interview
-
-See [`docs/PM_면접_설계방어_질문.md`](docs/PM_면접_설계방어_질문.md) for **what each score measures, why weights/FX/GAAP are not yet proven, counterfactuals, and 10 concrete questions**. This is a self-test, not a claim that AI-assisted code was written independently.
-
 ## Responsible publication and AI contributions
 
 Only code, methods, selected **redacted** example outputs and permitted sources should be published. Never commit secrets, personal account balances, paid licensed datasets, or complete news articles. AI assisted implementation, while project requirements, hypothesis questions, reviewing outcomes and research decisions are user-directed; personal development proficiency is not misrepresented. Code does **not** place trades or modify the other simulated portfolios.
