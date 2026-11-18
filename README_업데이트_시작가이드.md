@@ -1,10 +1,10 @@
-# Asia GARP v0.5 — GitHub 1회 통합 실행 안내
+# Asia GARP v0.5 — One Workflow, Three Research Stages
 
-1. 기존 `ai-quant-asia-garp-research` 저장소를 백업하고 이번 ZIP 안쪽의 같은 이름 폴더에 있는 내용을 덮어쓴 다음 GitHub Desktop에서 Commit → Push 합니다. 숨김 `.github` 폴더도 포함하세요. **별도 모의운용 저장소는 수정하지 않습니다.**
-2. GitHub 저장소 → **Actions** → **Asia GARP v0.5 | Discovery + Evidence + Valuation (Research Only)** → **Run workflow**.
-3. 최초 권장: `max_symbols=150`, `discover_mode=all5_official`, `per_region=90`, `fx_mode=live`, `evidence_mode=full`. 모두 한 번에 실행합니다.
-4. 완료한 Run 페이지 아래 **Artifacts**에서 `asia-garp-v05-...zip`을 다운로드합니다. 우선 `34_research_quality_v05.json`, `35_quality_upgrade_comparison.md`, `32_research_stage_gate.csv`, `33_analyst_memoranda.md`, `12_discovery_sources_log.csv`를 보세요.
-5. **초기 `MEMO_READY=0`은 정상**입니다. 기존 v0.31의 공식 공시 재무수치 실제 대조가 0건이었습니다. 임의로 인증한 것으로 처리하지 않습니다. 특정 기업에 대해 3개 핵심 재무수치를 직접 공시와 대조한 뒤 `data/verified_financials.csv`에 기록하고, `data/valuation_assumptions.csv`, `data/research_decisions.csv`를 작성한 후 재실행해야 단계가 승격됩니다.
-6. 한국의 공식 KRX 상장목록을 자동 확인하려면 공공데이터포털에서 API 접근을 발급받아 Actions Secret `PUBLIC_DATA_API_KEY`를 등록하세요. 한국의 DART 공시 **목록**은 별도 `DART_API_KEY`를 등록해야 합니다. 두 기능 모두 키가 없어도 다른 시장 연구는 실행합니다.
+1. Back up your current `ai-quant-asia-garp-research` repository and extract the full v0.5 ZIP. Copy the **contents of the inner repository directory**, including `.github/`, onto the existing repo root.
+2. **Important upgrade cleanup:** in the existing local repo delete `.github/workflows/run-research.yml` (obsolete v0.3.1 GitHub Actions workflow). Keep `.github/workflows/run-research-v05.yml`. Copying the new ZIP over old files will not remove the obsolete one automatically. Do not delete `src/v031.py`; it is still used internally by v0.5.
+3. In GitHub Desktop, commit **all v0.5 code/doc changes and the deletion of the old workflow**, then Push origin. Avoid Force Push.
+4. GitHub → **Actions → Asia GARP v0.5 | Discovery + Evidence + Valuation (Research Only)** → **Run workflow**. Recommended first run: `max_symbols=150`, `discover_mode=all5_official`, `per_region=90`, `fx_mode=live`, `evidence_mode=full`. This single invocation executes all three research stages.
+5. In the run's **Artifacts**, inspect `34_research_quality_v05.json`, `35_quality_upgrade_comparison.md`, `32_research_stage_gate.csv`, and `33_analyst_memoranda.md`.
+6. `MEMO_READY=0` is expected until you manually reconcile primary filings and enter reviewed valuation inputs. Optional repository Secrets: `PUBLIC_DATA_API_KEY` for Korea listed-company identity adapter; `DART_API_KEY` for Korean regulator filing index.
 
-**품질검증:** `python -m pytest -q tests`를 GitHub Actions에서 선행 실행합니다. CI 성공 = 시스템 동작 확인이지 투자분석 정확도나 미래 수익률 향상 입증은 아닙니다.
+Only the v0.5 Actions workflow should remain active. The archival v0.3.1 specification stays in `docs/v031-legacy-workflow.yml.txt` for history. Test success verifies process safeguards, not investment outperformance.

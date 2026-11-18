@@ -1,8 +1,15 @@
+## v0.5.0 — workflow consolidation patch (2026-11-18)
+- Designated `.github/workflows/run-research-v05.yml` as the **sole** active GitHub Actions research workflow.
+- Retired the standalone v0.3.1 `.github/workflows/run-research.yml` (must be deleted when upgrading an existing checkout).
+- Preserved the v0.3.1 engine as a Python dependency of `src.v05` and archived the historical workflow specification under `docs/`.
+- Added three workflow-layout regression tests and explicit migration instructions to prevent duplicate runs.
+- No changes to screening, valuations, investment decisions, or trade execution.
+
 ## 0.5.0 — 2026-11-18 — integrated three-stage research quality gates
 - Added optional JPX XLSX, TWSE open data, KRX authenticated issuer listing adapters with provenance; vendor regional screeners remain and no full-census claims.
 - Added manual primary-financial reconciliation, strict same-period/source/reviewer/2% gates, and company-level stage reports.
 - Added 3-scenario FCFF DCF with explicit manually supplied assumptions, bear case, catalyst, falsification trigger, analyst acceptance gate.
-- Added v0.5 GitHub workflow (manual one-click), 30..37 audit artifacts, regression tests and a full Korean quick start.
+- Added v0.5 GitHub workflow (manual one-click), 30..37 audit artifacts, regression tests, and an English README documenting the full version history and investigation rationale.
 - Applied gates to archived v0.31 live-result dataset: 684 analyzed, 94 screened, 0 evidence checked, 0 memo ready. This is a truthful baseline, NOT improved stock selection accuracy.
 
 # Release and investigation log
@@ -24,6 +31,18 @@
 - Follow-up audit: Japan 272/416, mainland China 1; all 355 new names excluded by research gating. Not a comprehensive five-market universe.
 - Began USD FX proxies and issuer accounting standard audit. Different-industry 100-point ranking is NOT return-calibrated.
 
-## v0.2.1 / v0.2 / v0.1
+## v0.2.1 — anomaly quarantine after currency/period uncertainty
 
-- Progressive peer-group sampling, anomaly quarantine, Hong Kong currency handling, curated universe expansion. Historical results reflect differing vendor snapshots and scoring models, so they cannot be interpreted as a controlled study of investment quality.
+- Increased conservative quarantine of suspect vendor financial metrics and ambiguous Hong Kong currency handling. Unresolved fiscal-period/PE issues remain a limitation.
+- Next issue: static curated lists did not discover unfamiliar issuers or provide a defensible cross-industry research priority.
+
+## v0.2 — curated 61-company comparison
+
+- Used an expanded 61-company watchlist, industry peer-groups, and explicit financial metric warnings to address the semiconductor concentration and questionable vendor figures found in the earlier experiment.
+- Next issue: inconsistent currency and reporting-period treatment could create misleading ratios, especially for Hong Kong listings.
+
+## v0.1 — initial GARP experiment
+
+- Started with a small candidate set and growth/value-based screening. Observed semiconductor clustering and suspect Yahoo-derived metrics; these observations motivated peer-group and data-quality checks rather than stronger return claims.
+
+**Comparison caution:** Historical runs use differing vendor snapshots, universes and scoring rules. The versions do not form a controlled study of investment performance.

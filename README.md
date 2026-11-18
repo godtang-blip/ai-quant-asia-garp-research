@@ -2,7 +2,7 @@
 
 > **Research-only independent project.** No trading, brokerage orders, allocations, or investment recommendations. Not affiliated with Redpoint Partners or any financial institution. Developed with AI coding assistance; human researcher remains responsible for all numbers, classifications and decisions.
 
-**One repository, one GitHub Actions execution, three research stages:**
+**One repository, one active GitHub Actions workflow, one execution covering three research stages:**
 
 1. **DISCOVERY** — Five Asian equity markets (Korea, Japan, China, Hong Kong, Taiwan), curated + actual source-discovered symbols, provenance, basic vendor screening and market balance. In `all5_official`, the pipeline *attempts* official Japan JPX, Taiwan TWSE, optionally Korea KRX with a data.go.kr API key, official Nikkei index, and five vendor regional screeners. China and Hong Kong listing discovery still depends on the vendor screener; not a census. Source failures are logged, not replaced with fictional tickers.
 2. **EVIDENCE** — Dated news **headlines only**, vendor quarterly financial rows, optional regulator DART **filing index** (Korea) and explicitly analyst-attested reconciliations of primary filing numbers. Financial statement comparisons must have the same period, units, a dated official/issuer source locator, a reviewer and <=2% deviation. Nothing is automatically counted as filing verified merely because a URL exists.
@@ -34,9 +34,10 @@ This project did not begin as a finished investment model with known answers. It
 ## GitHub installation (existing repository; no new repository needed)
 
 1. Download the **full v0.5 GitHub repository ZIP** and unzip it. Copy the **contents** of the inner `ai-quant-asia-garp-research/` folder onto the root of your current `ai-quant-asia-garp-research` GitHub repository. Back up your existing repository first. Include the hidden `.github/` folder. Commit/push using GitHub Desktop (or Git). Do **not** alter your separate `ai-quant-v512-paper` account repository or its `state/latest.zip`.
-2. In GitHub open **Actions → Asia GARP v0.5 | Discovery + Evidence + Valuation (Research Only) → Run workflow**. Use `max_symbols=150`, `discover_mode=all5_official`, `per_region=90`, `fx_mode=live`, `evidence_mode=full`. GitHub Action automatically runs all offline regression and quality-gate tests first.
-3. After a successful run, download the `asia-garp-v05-<run-id>` Artifact ZIP from the Actions run. The most useful files are `03_research_report.md`, `12_discovery_sources_log.csv`, `22_evidence_sources_log.csv`, `32_research_stage_gate.csv`, `33_analyst_memoranda.md`, `34_research_quality_v05.json`, `35_quality_upgrade_comparison.md`, `36_official_exchange_source_registry.csv`.
-4. To verify official filings yourself, edit the two **blank** CSV templates `data/verified_financials.csv` and `data/valuation_assumptions.csv`, plus existing `data/research_decisions.csv`. Commit them and re-run. Empty data are intentional: no false verified recommendations.
+2. **Retire the old v0.3.1 workflow before pushing:** delete `.github/workflows/run-research.yml` from your **existing local repository**. Keep `.github/workflows/run-research-v05.yml`. Copying/unzipping v0.5 over an existing directory **does not delete** old files; without this deletion GitHub will show two runnable workflows. This is only an obsolete **Actions configuration**. Keep `src/v031.py`, `src/discovery_v031.py`, and `docs/v031-legacy-workflow.yml.txt` because the v0.5 Python engine calls v0.3.1 internals, and the historical source/documentation must remain reproducible. GitHub Desktop should show the deleted YAML file in **Changes**; include it in the Commit and Push. Do not delete or edit other repositories or account state.
+3. In GitHub open **Actions → Asia GARP v0.5 | Discovery + Evidence + Valuation (Research Only) → Run workflow**. Use `max_symbols=150`, `discover_mode=all5_official`, `per_region=90`, `fx_mode=live`, `evidence_mode=full`. GitHub Action automatically runs all offline regression and quality-gate tests first.
+4. After a successful run, download the `asia-garp-v05-<run-id>` Artifact ZIP from the Actions run. The most useful files are `03_research_report.md`, `12_discovery_sources_log.csv`, `22_evidence_sources_log.csv`, `32_research_stage_gate.csv`, `33_analyst_memoranda.md`, `34_research_quality_v05.json`, `35_quality_upgrade_comparison.md`, `36_official_exchange_source_registry.csv`.
+5. To verify official filings yourself, edit the two **blank** CSV templates `data/verified_financials.csv` and `data/valuation_assumptions.csv`, plus existing `data/research_decisions.csv`. Commit them and re-run. Empty data are intentional: no false verified recommendations.
 
 **Optional Secrets** in Repository Settings → Secrets and variables → Actions:
 - `DART_API_KEY`: Korean OpenDART filing *index*, not verified numerical statements.
@@ -86,3 +87,9 @@ Replay without explicit `--asof-date` **disables promotion from external analyst
 - Newspaper RSS returns **unread headline metadata**, not verified news claims. No LLM is allowed to invent facts or automatically set investment decisions.
 
 See `docs/QUALITY_SPEC_V05.md` for exact fields and `docs/README_v031_legacy.md` for historical engineering lineage.
+
+## Why there is only one active GitHub Actions workflow
+
+The prior `run-research.yml` executed the standalone v0.3.1 analysis. It was a **legacy version**, not a stage that v0.5 requires you to run manually. The new `run-research-v05.yml` invokes `src.v05`, which calls `src.v031` internally and then applies v0.5 evidence reconciliation, scenario valuation and memorandum gates. Running both separately wastes API requests and may produce confusing outputs from different versions. The original v0.3.1 workflow is preserved as an **inactive historical text file** at `docs/v031-legacy-workflow.yml.txt`, not under `.github/workflows/`.
+
+When upgrading an existing checkout, verify with `dir .github\workflows` (Windows) that **only `run-research-v05.yml`** remains. The regression tests now explicitly fail if another `.yml` or `.yaml` workflow remains active. Existing historical GitHub Actions run records may remain visible in the GitHub UI, but only the v0.5 workflow will be dispatched from the current repository files.
