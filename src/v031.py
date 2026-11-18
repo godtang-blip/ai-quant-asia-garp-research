@@ -28,7 +28,12 @@ def vendor_industry_group(industry: str, sector: str) -> str:
     i=(str(industry or '')+' '+str(sector or '')).lower()
     if 'semiconductor equipment' in i or 'semiconductor materials' in i:return 'chip_equipment'
     if 'semiconductor' in i:return 'chip_components'
-    if any(x in i for x in ('electric equipment','electrical equipment','electrical components','electronic components','industrial automation')):
+    # "Electronic Components" is an umbrella vendor category, NOT evidence that
+    # the issuer benefits from industrial electrification. Quarantine until an
+    # analyst validates its products / end-markets from company filings.
+    if any(x in i for x in ('electronic components','electrical components')):
+        return 'unclassified'
+    if any(x in i for x in ('electric equipment','electrical equipment','industrial automation')):
         return 'industrial_electrification'
     if any(x in i for x in ('internet content','internet retail','internet software','software - application','information technology services')):
         return 'platforms'
@@ -228,7 +233,12 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
         if r.get('peer_group')=='unclassified':
             mapped=vendor_industry_group(str(r.get('vendor_industry') or ''),str(r.get('vendor_sector') or ''))
             r['peer_group']=mapped
-            r['sector_mapping_status']='VENDOR_HEURISTIC_NEEDS_REVIEW' if mapped!='unclassified' else 'UNCLASSIFIED_NEEDS_REVIEW'
+            if mapped!='unclassified':
+                r['sector_mapping_status']='VENDOR_HEURISTIC_NEEDS_REVIEW'
+            elif any(k in str(r.get('vendor_industry') or '').lower() for k in ('electronic components','electrical components')):
+                r['sector_mapping_status']='BROAD_COMPONENTS_NEEDS_PRODUCT_LEVEL_REVIEW'
+            else:
+                r['sector_mapping_status']='UNCLASSIFIED_NEEDS_REVIEW'
         else:r['sector_mapping_status']='CURATED_HUMAN_TAXONOMY_UNVERIFIED'
         if fx is not None and not r['fetch_error']:
             r.update(normalized_values(r,fx))

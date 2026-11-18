@@ -24,39 +24,87 @@ def _market_row(code: str, name: str, market: str, source: str) -> dict:
             'is_new_discovery': True}
 
 
-def parse_jpx_table(frame: pd.DataFrame) -> list[dict]:
-    """Accept domestic common shares only; reject ETFs, REITs, products and unclear classes.
+def _jpx_normalize_header(value: object) -> str:
+    """Ignore spacing/punctuation/full-width variants when matching JPX headers."""
+    import unicodedata
+    raw = unicodedata.normalize('NFKC', str(value or '')).lower()
+    return re.sub(r'[^\w\u3040-\u30ff\u3400-\u9fff]+', '', raw)
 
-    TSE 2026 increasingly uses alphanumeric issue codes. Current scoring engine
-    supports numerical 4-digit .T only; excluded codes are not silently remapped.
+
+def _jpx_columns(columns) -> dict[str, object] | None:
+    normalized = {c: _jpx_normalize_header(c) for c in columns}
+    def find(candidates, *, forbid=()):
+        for word in candidates:
+            needle=_jpx_normalize_header(word)
+            for column,text in normalized.items():
+                if needle in text and not any(_jpx_normalize_header(x) in text for x in forbid):
+                    return column
+        return None
+    # Avoid interpreting dates, venue identifiers or issuer classification as ticker codes.
+    code=find(['Local Code','Issue Code','Securities Code','銘柄コード','コード','Code'],forbid=['industry','sector','業種','topix','分類'])
+    name=find(['Name (English)','Company Name','Issue Name','銘柄名','会社名','Name'],forbid=['industry','sector','業種','分類'])
+    segment=find(['Market/Products','Market and Products','Market Segment','Market Category',
+                  'Market/Product','Market Division','市場・商品区分','市場区分','市場商品区分',
+                  '上場市場','Market'],forbid=['capitalization','時価総額'])
+    return {'code':code,'name':name,'segment':segment} if all(v is not None for v in (code,name,segment)) else None
+
+
+def _jpx_locate_table(frame:pd.DataFrame) -> tuple[pd.DataFrame,dict]:
+    """Accept explicit headers or up to 12 title/preamble rows before header.
+
+    Do not invent a market classification if no compatible header is found.
     """
-    df=frame.copy()
-    def pick(*phrases):
-        for col in df.columns:
-            s=str(col).strip().lower().replace(' ','')
-            if any(p in s for p in phrases):return col
-        raise ValueError('JPX listing required column absent: '+str(phrases))
-    code=pick('code','コード'); name=pick('name','銘柄名','社名')
-    segment=pick('market/products','marketandproducts','marketsegment','市場・商品区分')
+    cols=_jpx_columns(frame.columns)
+    if cols:return frame.copy(),cols
+    for row_index in range(min(12,len(frame))):
+        raw=frame.iloc[row_index].tolist()
+        cols=_jpx_columns(raw)
+        if cols:
+            # Assign temporary unique labels to survive duplicate/blank Excel columns.
+            renamed=[]; seen={}
+            for v in raw:
+                base=str(v).strip() or 'unnamed'
+                n=seen.get(base,0);seen[base]=n+1
+                renamed.append(base if not n else f'{base}__{n}')
+            rebuilt=frame.iloc[row_index+1:].copy()
+            rebuilt.columns=renamed
+            updated=_jpx_columns(rebuilt.columns)
+            if updated:return rebuilt,updated
+    description=', '.join(str(x)[:65] for x in list(frame.columns)[:20])
+    raise ValueError('JPX schema/header unrecognized (fail closed); observed headers: '+description)
+
+
+def parse_jpx_table(frame:pd.DataFrame) -> list[dict]:
+    """Parse domestic Prime/Standard/Growth equity candidates; no ETF/REIT guesswork."""
+    df,found=_jpx_locate_table(frame)
+    code,name,segment=(found[k] for k in ('code','name','segment'))
     result={}
     for _,r in df.iterrows():
-        token=str(r[code]).strip().replace('.0','')
+        token=str(r[code]).strip()
+        if token.endswith('.0'):token=token[:-2]
         title=str(r[name]).strip()
         typ=str(r[segment]).lower()
         if not re.fullmatch(r'[0-9]{4}',token) or not title or title.lower()=='nan':continue
-        if not any(s in typ for s in ('prime','standard','growth')):continue
-        if any(s in typ for s in ('etf','etn','reit','fund','preferred','foreign','investment trust','infrastructure')):continue
+        # EXPLICIT segment match; English/Japanese aliases. Reject broad 'Tokyo' etc.
+        domestic=any(s in typ for s in ('prime','standard','growth','プライム','スタンダード','グロース'))
+        if not domestic:continue
+        if any(s in typ for s in ('etf','etn','reit','fund','preferred','foreign','investment trust',
+                                  'infrastructure','投資信託','外国','優先','pro market')):continue
         result[token+'.T']=_market_row(token+'.T',title,'Japan',JPX_XLSX)
-    if not result:raise ValueError('JPX official table contained no eligible domestic equity rows')
+    if not result:raise ValueError('JPX parsed table contained no eligible domestic equity rows')
     return list(result.values())
 
 
 def source_jpx_list(session=None) -> list[dict]:
     sess=session or requests
-    reply=sess.get(JPX_XLSX,timeout=35,headers={'User-Agent':'AsiaGARPResearch/0.5'})
+    reply=sess.get(JPX_XLSX,timeout=35,headers={'User-Agent':'AsiaGARPResearch/0.5.1'})
     reply.raise_for_status()
     if len(reply.content)>15_000_000:raise ValueError('JPX file exceeds permitted size')
-    return parse_jpx_table(pd.read_excel(BytesIO(reply.content),dtype=str))
+    data=BytesIO(reply.content)
+    # Monthly JPX Excel files can contain introductory title rows above column names.
+    # header=None ensures their content can be inspected without losing preamble rows.
+    frame=pd.read_excel(data,header=None,dtype=str,engine='openpyxl')
+    return parse_jpx_table(frame)
 
 
 def parse_twse_list(payload) -> list[dict]:

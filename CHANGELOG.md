@@ -1,3 +1,13 @@
+## v0.5.1 — market coverage, classification and evidence-quality follow-up (2026-11-18)
+
+- Based on the submitted v0.5 run: 1,722 analyzed, 1,121 Taiwan (65.1%), 240 screening-eligible. This is observed **source imbalance**, not proof Taiwan has the most attractive equities.
+- JPX listing parser now detects multiple English/Japanese header variants and title-row offsets; rejects non-domestic equity product classes. Offline fixtures passed, live JPX integration remains unverified until the next Action run.
+- Changed ambiguous vendor `Electronic Components` / `Electrical Components` to `unclassified` for human product-level review instead of defaulting to industrial electrification.
+- Added coverage status `PARTIAL_COVERAGE`, market concentration diagnostics, a global queue separate from 5-country research review queues, and a blocked high-score recheck list.
+- Added title-only entity relevance checks for news RSS; articles referencing another listed ticker are quarantined. Matching a title is not proof the news content or financial claim was read/verified.
+- Preserved strict manual primary-financial reconciliation and 3-scenario DCF/memo gates. No automated issuer filing numeric verification, cross-market census, external success validation or portfolio orders.
+- Reused the existing single `.github/workflows/run-research-v05.yml` entry point, now invoking `src.v051`; no extra active workflow.
+
 ## v0.5.0 — workflow consolidation patch (2026-11-18)
 - Designated `.github/workflows/run-research-v05.yml` as the **sole** active GitHub Actions research workflow.
 - Retired the standalone v0.3.1 `.github/workflows/run-research.yml` (must be deleted when upgrading an existing checkout).
