@@ -12,7 +12,7 @@ on:
         required: true
         default: all5_official
         type: choice
-        options: [all5_official, all5, regional5, nikkei, off]
+        options: ['all5_official', 'all5', 'regional5', 'nikkei', 'off']
       per_region:
         description: 'Per market maximum Yahoo screener results (not full exchange census)'
         required: true
@@ -23,13 +23,13 @@ on:
         required: true
         default: full
         type: choice
-        options: [full, news, off]
+        options: ['full', 'news', 'off']
       fx_mode:
         description: 'Current spot and flow-proxy conversion; not verified financial restatement'
         required: true
         default: live
         type: choice
-        options: [live, off]
+        options: ['live', 'off']
 permissions:
   contents: read
 concurrency:
@@ -55,13 +55,18 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
+          GARP_INPUT_EVIDENCE_MODE: ${{ inputs.evidence_mode }}
+          GARP_INPUT_FX_MODE: ${{ inputs.fx_mode }}
+          GARP_INPUT_PER_REGION: ${{ inputs.per_region }}
+          GARP_INPUT_DISCOVER_MODE: ${{ inputs.discover_mode }}
+          GARP_INPUT_MAX_SYMBOLS: ${{ inputs.max_symbols }}
         run: |
           python -m src.v051 \
-            --max-symbols "${{ inputs.max_symbols }}" \
-            --discover-mode "${{ inputs.discover_mode }}" \
-            --per-region "${{ inputs.per_region }}" \
-            --fx-mode "${{ inputs.fx_mode }}" \
-            --evidence-mode "${{ inputs.evidence_mode }}" \
+            --max-symbols "$GARP_INPUT_MAX_SYMBOLS" \
+            --discover-mode "$GARP_INPUT_DISCOVER_MODE" \
+            --per-region "$GARP_INPUT_PER_REGION" \
+            --fx-mode "$GARP_INPUT_FX_MODE" \
+            --evidence-mode "$GARP_INPUT_EVIDENCE_MODE" \
             --evidence-limit 8 \
             --delay-seconds 0.7 \
             --output outputs

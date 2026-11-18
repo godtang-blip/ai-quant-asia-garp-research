@@ -49,11 +49,19 @@ def test_hkex_excludes_other_instruments_and_preserves_counters():
         ['Stock Code','Name of Securities','Category','Sub-Category'],
         [700,'Issuer HKD','Equity','Equity Securities (Main Board)'],
         [80700,'Issuer RMB','Equity','Equity Securities (Main Board)'],
+        [701,'Issuer class B','Equity','Equity Securities (Main Board)'],
+        [1234,'REIT','Equity','Real Estate Investment Trusts'],
+        [12345,'Warrant','Derivative Warrants','Equity Warrants'],
         [2800,'ETF','Exchange Traded Products','ETF'],
     ])
     rows, detail = fetch_listing('HKEX', response(body))
-    assert [row['ticker'] for row in rows] == ['0700.HK', '80700.HK']
-    assert detail['rejected_non_equity'] == 1
+    assert [row['ticker'] for row in rows] == ['0700.HK', '80700.HK', '0701.HK']
+    assert detail['rejected_non_equity'] == 3
+    assert json.loads(detail['excluded_by_category']) == {
+        'Equity / Real Estate Investment Trusts': 1,
+        'Derivative Warrants / Equity Warrants': 1,
+        'Exchange Traded Products / ETF': 1,
+    }
 
 
 def test_szse_and_failure_categories():
@@ -64,6 +72,7 @@ def test_szse_and_failure_categories():
     with pytest.raises(ListingError, match='Different company'):
         parse_records('HKEX', [(700,'A',True), ('00700','B',True)])
     assert failure_code(requests.exceptions.ProxyError('CONNECT 403')) == 'PROXY_FORBIDDEN'
+    assert failure_code(requests.exceptions.ConnectionError('Connection reset by peer')) == 'CONNECTION_RESET'
     assert failure_code(requests.exceptions.Timeout()) == 'TIMEOUT'
 
 
@@ -93,3 +102,28 @@ def test_lifecycle_keeps_original_decision_and_score():
     audit = candidate_review(ranked)
     assert audit.lifecycle.tolist() == ['FUNDAMENTAL_SCREEN_FAILURE','RECOVERABLE_EXCLUSION','RESEARCH_ELIGIBLE']
     pd.testing.assert_frame_equal(audit[ranked.columns], ranked)
+
+
+def test_tpex_openapi_english_fields_are_company_rows_with_provenance():
+    raw = json.dumps([
+        {'SecuritiesCompanyCode': '6488', 'CompanyName': 'GlobalWafers Co., Ltd.',
+         'CompanyAbbreviation': 'GlobalWafers', 'SecuritiesIndustryCode': '24'},
+        {'SecuritiesCompanyCode': '006201', 'CompanyName': 'Test fund',
+         'CompanyAbbreviation': 'Fund', 'SecuritiesIndustryCode': ''},
+        {'SecuritiesCompanyCode': '1234', 'CompanyName': None, 'CompanyAbbreviation': None},
+    ]).encode()
+    rows, detail = fetch_listing('TPEX', response(raw))
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row['ticker'], row['company']) == ('6488.TWO', 'GlobalWafers Co., Ltd.')
+    assert row['security_type_status'] == 'OFFICIAL_ISSUER_LIST_TYPE_CHECK_VENDOR'
+    assert row['discovery_source'] == detail['source_url']
+    assert detail['rejected_bad_symbol'] == 2
+    from hashlib import sha256
+    assert detail['source_sha256'] == sha256(raw).hexdigest()
+
+
+def test_tpex_schema_error_exposes_keys_not_values():
+    with pytest.raises(ListingError, match='observed keys: changed_field') as exc:
+        fetch_listing('TPEX', response(b'[{"changed_field":"do-not-log"}]'))
+    assert 'do-not-log' not in str(exc.value)

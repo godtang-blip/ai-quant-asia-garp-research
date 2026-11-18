@@ -141,6 +141,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
                          rejected_bad_symbol=detail.get('rejected_bad_symbol', 0) + len(rows) - len(cleaned),
                          source_url=url if kind != 'VENDOR_SAMPLE' else '',
                          scope=detail.get('scope', ''), duplicate_rows=detail.get('duplicate_rows', 0),
+                         excluded_by_category=detail.get('excluded_by_category', ''),
                          source_asof=detail.get('source_asof', ''), source_sha256=detail.get('source_sha256', ''))
         except Exception as exc:
             entry.update(status='FAILED_NO_FALLBACK', failure_code=failure_code(exc), error=f'{type(exc).__name__}: {str(exc)[:250]}')
@@ -152,7 +153,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
     result['listing_source_ids'] = result.ticker.map(lambda ticker: json.dumps(provenance[ticker]))
     columns = ['source', 'status', 'received', 'accepted_pattern', 'rejected_non_equity',
                'rejected_bad_symbol', 'error', 'market', 'source_kind', 'source_url',
-               'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows']
+               'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows', 'excluded_by_category']
     log = pd.DataFrame(logs, columns=columns)
     for column in ('received', 'accepted_pattern', 'rejected_non_equity', 'rejected_bad_symbol'):
         log[column] = log[column].fillna(0).astype(int)

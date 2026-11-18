@@ -1,7 +1,9 @@
 """Public listing downloads with explicit instrument scope and source diagnostics."""
+from collections import Counter
 from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
+import json
 import re
 
 import pandas as pd
@@ -33,7 +35,7 @@ def parse_records(venue, records):
         if not equity:
             excluded += 1
             continue
-        code, name = str(code).strip().removesuffix('.0'), str(name).strip()
+        code, name = str(code or '').strip().removesuffix('.0'), str(name or '').strip()
         if venue == 'HKEX' and re.fullmatch(r'[0-9]{1,5}', code):
             code = code.lstrip('0').zfill(4)
         if venue == 'SZSE' and re.fullmatch(r'[0-9]{1,6}', code):
@@ -70,6 +72,35 @@ def workbook_records(raw, fields, header_limit=15):
     raise ListingError('SCHEMA_DRIFT', 'Expected listing worksheet headers absent')
 
 
+def tpex_records(raw):
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise ListingError('PARSER_FAILURE', 'Expected JSON company listing') from exc
+    if not isinstance(payload, list) or not payload or not all(isinstance(row, dict) for row in payload):
+        raise ListingError('SCHEMA_DRIFT', 'Expected an array of TPEx company rows')
+    for code, name, short_name in (
+        ('SecuritiesCompanyCode', 'CompanyName', 'CompanyAbbreviation'),
+        ('公司代號', '公司名稱', '公司簡稱'),
+    ):
+        if all(code in row and name in row for row in payload):
+            return ((row[code], row[name] or row.get(short_name), True) for row in payload)
+    fields = ', '.join(sorted(payload[0])[:20])[:240]
+    raise ListingError('SCHEMA_DRIFT', f'Expected TPEx company code and name fields; observed keys: {fields}')
+
+
+def hkex_records(raw, excluded_categories):
+    for code, name, kind, subtype in workbook_records(
+        raw, ('Stock Code', 'Name of Securities', 'Category', 'Sub-Category')
+    ):
+        equity = kind.casefold() == 'equity' and subtype.casefold() in {
+            'equity securities (main board)', 'equity securities (gem)',
+        }
+        if not equity:
+            excluded_categories[f'{kind or "(blank)"} / {subtype or "(blank)"}'] += 1
+        yield code, name, equity
+
+
 def fetch_listing(venue, session=requests):
     _, url, _ = SOURCES[venue]
     with session.get(url, timeout=(8, 25), stream=True) as response:
@@ -79,24 +110,16 @@ def fetch_listing(venue, session=requests):
             raw.extend(chunk)
             if len(raw) > 16_000_000:
                 raise ListingError('PARSER_FAILURE', 'Listing exceeds 16 MB')
+    excluded_categories = Counter()
     if venue == 'TPEX':
-        import json
-        try:
-            payload = json.loads(raw)
-        except ValueError as exc:
-            raise ListingError('PARSER_FAILURE', 'Expected JSON company listing') from exc
-        if not isinstance(payload, list) or not all(isinstance(row, dict) and '公司代號' in row and
-                                                     '公司名稱' in row for row in payload):
-            raise ListingError('SCHEMA_DRIFT', 'Expected TPEx company code and name fields')
-        records = ((row['公司代號'], row['公司名稱'], True) for row in payload)
+        records = tpex_records(raw)
     elif venue == 'SZSE':
         records = ((code, name, True) for code, name in workbook_records(raw, ('A股代码','A股简称')))
     else:
-        records = ((code, name, kind.casefold() == 'equity' and
-                    subtype.casefold() in {'equity securities (main board)', 'equity securities (gem)'})
-                   for code, name, kind, subtype in workbook_records(
-                       raw, ('Stock Code', 'Name of Securities', 'Category', 'Sub-Category')))
+        records = hkex_records(raw, excluded_categories)
     rows, detail = parse_records(venue, records)
+    if venue == 'HKEX':
+        detail['excluded_by_category'] = json.dumps(excluded_categories, ensure_ascii=False, sort_keys=True)
     detail.update(source_sha256=sha256(raw).hexdigest())
     return rows, detail
 
@@ -110,6 +133,10 @@ def failure_code(exc):
         isinstance(exc, requests.exceptions.ProxyError) and '403' in str(exc)
     ):
         return 'PROXY_FORBIDDEN'
+    if isinstance(exc, requests.exceptions.ConnectionError) and (
+        'connection reset' in str(exc).casefold() or 'connectionreseterror' in str(exc).casefold()
+    ):
+        return 'CONNECTION_RESET'
     if isinstance(exc, requests.exceptions.Timeout):
         return 'TIMEOUT'
     if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
