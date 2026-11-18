@@ -2,6 +2,8 @@
 import argparse
 from pathlib import Path
 
+import pandas as pd
+
 from .discovery_review import review_venues
 from .discovery_v031 import discover_five_markets
 from .v031 import _read_curated
@@ -11,12 +13,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--universe', type=Path, default=Path('data/universe.csv'))
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--china-only', action='store_true', help='Run mainland China listings sources only')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    universe, logs = discover_five_markets(_read_curated(args.universe), 'all5_official', per_region=0, security_master=True)
+    provisional = []
+    universe, logs = discover_five_markets(_read_curated(args.universe), 'all5_official', per_region=0,
+                                          security_master=True, china_only=args.china_only,
+                                          provisional_inventory=provisional)
+    pd.DataFrame(provisional, columns=['ticker', 'source_asof', 'source', 'classification',
+                                       'screening_eligible']).to_csv(
+        args.output/'48_baostock_provisional_shenzhen.csv', index=False)
     universe.to_csv(args.output/'11_discovery_universe.csv', index=False)
     logs.to_csv(args.output/'12_discovery_sources_log.csv', index=False)
     venues = review_venues(universe, logs)
+    if args.china_only:
+        venues = venues.loc[venues.market.eq('China')]
     venues.to_csv(args.output/'47_venue_coverage.csv', index=False)
     print(venues[['venue', 'live_status', 'successful_live_sources', 'live_supported_n']].to_string(index=False))
 

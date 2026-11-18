@@ -70,9 +70,12 @@ def source_region(market:str, max_rows:int=100, page_size:int=50)->tuple[list[di
                   'rejected_bad_symbol':rejected.count('INVALID_MARKET_SYMBOL')}
 
 
-def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, *, security_master:bool=False)->tuple[pd.DataFrame,pd.DataFrame]:
+def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, *, security_master:bool=False,
+                          china_only:bool=False, provisional_inventory:list|None=None)->tuple[pd.DataFrame,pd.DataFrame]:
     if mode not in ('off','all5','regional5','nikkei','all5_official'):
         raise ValueError('discover_mode must be off, all5, regional5, nikkei, all5_official')
+    if china_only:
+        base = base.loc[base.market.eq('China')].copy()
     result=base.copy().fillna('');result['is_new_discovery']=False
     result['discovery_source']='CURATED_LIST'
     result['security_type_status']='CURATED_TICKER_TYPE_NEEDS_CONFIRMATION'
@@ -127,6 +130,9 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
             sources.append((f'yahoo_screener_{market}', market, 'VENDOR_SAMPLE',
                             lambda market=market: source_region(market, per_region)))
 
+    if china_only:
+        sources = [source for source in sources if source[1] == 'China']
+        logs = [entry for entry in logs if entry['market'] == 'China']
     outcomes = {}
     for name, market, kind, fetch in sources:
         entry = {'source': name, 'market': market, 'source_kind': kind,
@@ -168,6 +174,11 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                 continue
         try:
             rows, detail = fetch()
+            provisional = detail.get('provisional_rows', [])
+            if detail.get('failure_stage'):
+                entry['evidence_classification'] = 'UNVERIFIED_CANDIDATE'
+            if provisional_inventory is not None:
+                provisional_inventory.extend(provisional)
             cleaned = []
             source_urls = set()
             for row in rows:
@@ -187,7 +198,12 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
                     refs.append(name)
             candidates.extend(cleaned)
             url = detail.get('source_url') or ' | '.join(sorted(source_urls))
-            entry.update(status='OK' if cleaned else 'NO_VALID_ROWS',
+            entry.update(status=('OK' if cleaned else 'PROVISIONAL_INVENTORY_ONLY'
+                                 if detail.get('failure_stage') else 'NO_VALID_ROWS'),
+                         failure_code=detail.get('failure_code', ''),
+                         failure_stage=detail.get('failure_stage', ''),
+                         provisional_inventory_n=len(provisional),
+                         sdk_metrics=json.dumps(detail['sdk_metrics']) if 'sdk_metrics' in detail else '',
                          received=detail.get('received', len(rows)), accepted_pattern=len(cleaned),
                          rejected_non_equity=detail.get('rejected_non_equity', 0),
                          rejected_bad_symbol=detail.get('rejected_bad_symbol', 0) + len(rows) - len(cleaned),
@@ -225,6 +241,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
             lambda ticker: json.dumps(china_names.get(ticker, {}), ensure_ascii=False))
         result['listing_name_disagreement'] = result.ticker.map(
             lambda ticker: len({' '.join(name.casefold().split()) for name in china_names.get(ticker, {}).values()}) > 1)
+    if mode == 'all5_official' and not china_only:
         dart_log = {'source': 'opendart_issuer_crosscheck', 'market': 'Korea',
                     'source_kind': 'ISSUER_IDENTITY_ONLY', 'observed_utc': observed_utc(),
                     'source_url': 'https://opendart.fss.or.kr/api/corpCode.xml',
@@ -250,7 +267,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, 
     columns = ['source', 'status', 'received', 'accepted_pattern', 'rejected_non_equity',
                'rejected_bad_symbol', 'error', 'market', 'source_kind', 'source_url',
                'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows', 'excluded_by_category', 'identity_matches',
-               'evidence_classification', 'scope_counts', 'unknown_classification', 'completeness_check', 'retrieval_mode', 'inactive_or_after_cutoff', 'response_diagnostics']
+               'evidence_classification', 'scope_counts', 'unknown_classification', 'completeness_check', 'retrieval_mode', 'inactive_or_after_cutoff', 'response_diagnostics', 'failure_stage', 'provisional_inventory_n', 'sdk_metrics']
     log = pd.DataFrame(logs, columns=columns)
     for column in ('received', 'accepted_pattern', 'rejected_non_equity', 'rejected_bad_symbol'):
         log[column] = log[column].fillna(0).astype(int)

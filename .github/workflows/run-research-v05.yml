@@ -6,6 +6,10 @@ on:
         description: 'Fetch listings and publish diagnostics without financial analysis'
         type: boolean
         default: false
+      china_only:
+        description: 'Limit discovery-only diagnostics to mainland China'
+        type: boolean
+        default: false
       max_symbols:
         description: 'Max fetched stocks; 150 recommended; 0=all discovered (may be slow)'
         required: true
@@ -87,7 +91,13 @@ jobs:
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
-        run: python -m src.discovery_smoke --output outputs
+          GARP_CHINA_ONLY: ${{ inputs.china_only }}
+        run: |
+          if [[ "$GARP_CHINA_ONLY" == true ]]; then
+            python -m src.discovery_smoke --output outputs --china-only
+          else
+            python -m src.discovery_smoke --output outputs
+          fi
       - name: Require quality audit & zero autonomous trading
         if: ${{ !inputs.discovery_only }}
         run: |

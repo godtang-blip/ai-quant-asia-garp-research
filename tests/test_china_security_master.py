@@ -107,3 +107,90 @@ def test_stalled_worker_surfaces_only_allowlisted_stage(monkeypatch):
     with pytest.raises(ListingError, match='dated_inventory') as exc:
         master.fetch_baostock()
     assert exc.value.code == 'TIMEOUT' and 'secret' not in str(exc.value)
+
+
+@pytest.mark.parametrize(('phase', 'expected_rows'), [('master_query', 0), ('master_rows', 1)])
+def test_inventory_first_and_separate_master_phase_metrics(monkeypatch, phase, expected_rows):
+    import sys
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from src import china_security_master as master
+
+    calls = []
+    yesterday = str(datetime.now(ZoneInfo('Asia/Shanghai')).date() - timedelta(days=1))
+
+    def rows(fields, records, stall=False):
+        class Result:
+            error_code = '0'
+
+            def __init__(self):
+                self.fields = fields
+                self._records = iter(records)
+
+            def next(self):
+                self.current = next(self._records, None)
+                if self.current is None and stall:
+                    raise master.StageTimeout
+                return self.current is not None
+
+            def get_row_data(self):
+                return self.current
+
+        return Result()
+
+    def query():
+        calls.append('master')
+        if phase == 'master_query':
+            raise master.StageTimeout
+        return rows(['code'], [['sz.000001']], stall=True)
+
+    def dated(as_of):
+        calls.append('inventory')
+        assert as_of == yesterday
+        return rows(['code'], [['sz.000001'], ['sz.300001'], ['sz.159001'], ['bj.920001']])
+
+    monkeypatch.setitem(sys.modules, 'baostock', SimpleNamespace(
+        login=lambda: SimpleNamespace(error_code='0'),
+        query_trade_dates=lambda **kw: rows(['calendar_date', 'is_trading_day'], [[yesterday, '1']]),
+        query_all_stock=dated, query_stock_basic=query))
+    bundle = master.collect(allow_provisional=True)
+    assert calls == ['inventory', 'master']
+    assert bundle['master_failure_stage'] == phase and bundle['master_failure'] == 'TIMEOUT'
+    assert 'master' not in bundle
+    assert bundle['sdk_metrics']['dated_inventory']['rows'] == 4
+    assert bundle['sdk_metrics'].get('master_rows', {}).get('rows', 0) == expected_rows
+    assert 'duration_seconds' in bundle['sdk_metrics'][phase]
+    provisional = master.provisional_shenzhen(bundle)
+    assert [entry['ticker'] for entry in provisional] == ['000001.SZ', '300001.SZ']
+    assert all(entry['screening_eligible'] is False for entry in provisional)
+
+
+def test_china_only_provisional_rows_never_enter_discovery(monkeypatch):
+    for key in ('DART_API_KEY','PUBLIC_DATA_API_KEY','GARP_TUSHARE_EXPORT_DIR','GARP_LISTING_EXPORT_DIR'):
+        monkeypatch.delenv(key, raising=False)
+
+    def listing(venue):
+        assert venue in {'SSE','SSE_STAR','SZSE','SZSE_JSON','BSE'}
+        return [], {}
+
+    def vendor(*args):
+        pytest.fail('A non-China route was called')
+
+    monkeypatch.setattr(discovery, 'fetch_listing', listing)
+    monkeypatch.setattr(discovery, 'source_jpx_list', vendor)
+    monkeypatch.setattr(discovery, 'source_twse_list', vendor)
+    monkeypatch.setattr(discovery, 'source_nikkei225', vendor)
+    candidate = {'ticker':'000001.SZ', 'classification':'UNVERIFIED_INVENTORY_CANDIDATE',
+                 'screening_eligible':False}
+    monkeypatch.setattr(discovery, 'fetch_baostock', lambda: ([], dict(
+        provisional_rows=[candidate], failure_stage='master_query', failure_code='TIMEOUT',
+        sdk_metrics={'master_query': {'duration_seconds': 12}})))
+    sink = []
+    base = pd.DataFrame([dict(ticker='005930.KS', market='Korea'), dict(ticker='600000.SS', market='China')])
+    universe, logs = discovery.discover_five_markets(base, 'all5_official', 0, security_master=True,
+                                                    china_only=True, provisional_inventory=sink)
+    assert universe.ticker.tolist() == ['600000.SS'] and sink == [candidate]
+    audit = logs.set_index('source').loc['baostock_security_master']
+    assert audit.status == 'PROVISIONAL_INVENTORY_ONLY'
+    assert audit.accepted_pattern == 0 and audit.evidence_classification == 'UNVERIFIED_CANDIDATE'
+    assert audit.failure_stage == 'master_query'
