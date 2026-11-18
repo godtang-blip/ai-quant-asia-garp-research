@@ -10,6 +10,12 @@
 
 **Important: This version upgrades research *process auditing*, not demonstrated stock-picking quality.** Its new quality tests cannot establish predictive power or future return outperformance.
 
+## Optional Gemini filing research
+
+The v0.5.2 research CLI reads completed screening and evidence artifacts and
+writes source-linked financial observations to a separate report. See the
+[setup, source approval, and verification guide](docs/GEMINI_FILING_RESEARCH_V052.md).
+
 ## Five-market coverage follow-up
 
 The `all5_official` workflow now supports dated exchange exports alongside the
