@@ -97,7 +97,10 @@ def coverage_audit(outputs: Path, mode: str, failed_fetches: pd.DataFrame | None
         official_ids = {key} if status == 'OK' else set()
         export_ids = {f'export_{venue}' for venue, (region, *_) in VENUES.items()
                       if region == market and logmap.get(f'export_{venue}', {}).get('status') == 'OK'}
-        if status != 'OK':
+        live_ids = {source_id for source_id, entry in logmap.items()
+                    if source_id.startswith('live_') and entry.get('market') == market and entry['status'] == 'OK'}
+        official_ids.update(live_ids)
+        if not official_ids:
             official_missing.append(market)
         if mode == 'off':
             coverage = 'SNAPSHOT_NO_LIVE_DISCOVERY'
@@ -126,6 +129,7 @@ def coverage_audit(outputs: Path, mode: str, failed_fetches: pd.DataFrame | None
         rows.append({
             'market': market, 'official_source': key, 'official_source_status': status,
             'official_rows_received': int(source.get('accepted_pattern', 0) or 0),
+            'additional_live_listings': '|'.join(sorted(live_ids)),
             'publisher_exports_imported': '|'.join(sorted(export_ids)),
             'listing_backed_tickers_n': listing_backed,
             'discovered_universe_n': len(ext),

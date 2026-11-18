@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 from .discovery import source_nikkei225
 from .official_universe import source_jpx_list, source_twse_list, source_krx_list, previous_weekday, JPX_CODE
+from .venue_sources import SOURCES, fetch_listing, failure_code, observed_utc
 from .listing_exports import VENUES, load_listing_export
 
 REGIONS = {'Korea': ('kr', (r'^\d{6}\.KS$', r'^\d{6}\.KQ$')),
@@ -94,6 +95,9 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
             ('official_jpx_full_listing', 'Japan', 'LIVE_LISTING', lambda: (source_jpx_list(), {})),
             ('official_twse_listed_companies', 'Taiwan', 'LIVE_LISTING', lambda: (source_twse_list(), {})),
         ])
+        sources.extend((f'live_{venue}', market, 'LIVE_LISTING',
+                        lambda venue=venue: fetch_listing(venue))
+                       for venue, (market, _, _) in SOURCES.items())
         directory = os.environ.get('GARP_LISTING_EXPORT_DIR')
         for venue, (market, *_) in VENUES.items():
             path = Path(directory) / f'{venue}.csv' if directory else None
@@ -109,7 +113,11 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
                             lambda market=market: source_region(market, per_region)))
 
     for name, market, kind, fetch in sources:
-        entry = {'source': name, 'market': market, 'source_kind': kind}
+        entry = {'source': name, 'market': market, 'source_kind': kind,
+                 'observed_utc': observed_utc()}
+        if name.startswith('live_'):
+            _, url, scope = SOURCES[name.removeprefix('live_')]
+            entry.update(source_url=url, scope=scope)
         try:
             rows, detail = fetch()
             cleaned = []
@@ -132,9 +140,10 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
                          rejected_non_equity=detail.get('rejected_non_equity', 0),
                          rejected_bad_symbol=detail.get('rejected_bad_symbol', 0) + len(rows) - len(cleaned),
                          source_url=url if kind != 'VENDOR_SAMPLE' else '',
+                         scope=detail.get('scope', ''), duplicate_rows=detail.get('duplicate_rows', 0),
                          source_asof=detail.get('source_asof', ''), source_sha256=detail.get('source_sha256', ''))
         except Exception as exc:
-            entry.update(status='FAILED_NO_FALLBACK', error=f'{type(exc).__name__}: {str(exc)[:250]}')
+            entry.update(status='FAILED_NO_FALLBACK', failure_code=failure_code(exc), error=f'{type(exc).__name__}: {str(exc)[:250]}')
         logs.append(entry)
     if candidates:
         added = pd.DataFrame(candidates)
@@ -143,7 +152,7 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
     result['listing_source_ids'] = result.ticker.map(lambda ticker: json.dumps(provenance[ticker]))
     columns = ['source', 'status', 'received', 'accepted_pattern', 'rejected_non_equity',
                'rejected_bad_symbol', 'error', 'market', 'source_kind', 'source_url',
-               'source_asof', 'source_sha256']
+               'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows']
     log = pd.DataFrame(logs, columns=columns)
     for column in ('received', 'accepted_pattern', 'rejected_non_equity', 'rejected_bad_symbol'):
         log[column] = log[column].fillna(0).astype(int)

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
+from .discovery_review import review_venues
 from .discovery_v031 import discover_five_markets, select_market_balanced, select_market_coverage_aware
 from .accounting import issuer_evidence, accounting_basis
 from .fx import YahooFX, normalized_values
@@ -207,6 +208,8 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
                         (discovery_log, '12_discovery_sources_log.csv'),
                         (selected, '08_selected_universe.csv')):
         table.to_csv(outputs/name, index=False, encoding='utf-8-sig')
+    if discover_mode == 'all5_official':
+        review_venues(combined, discovery_log).to_csv(outputs/'47_venue_coverage.csv', index=False)
     prior=_prior_open(universe_file)
     gaap_evidence=issuer_evidence(universe_file.parent/'accounting_issuer_evidence.csv')
     now=dt.datetime.now(dt.timezone.utc).isoformat()
