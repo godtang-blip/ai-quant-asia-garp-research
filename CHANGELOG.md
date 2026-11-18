@@ -1,18 +1,22 @@
-# Changes — research project (AI-assisted implementation)
+# Release and investigation log
 
-## v0.3.0 — 2026-11-18
-- Added external constituent discovery with an official Nikkei 225 source and optional regional vendor screener; failures audited instead of fake fallback data.
-- Added USD price and market-cap conversion plus source-dated 1-year mean proxy for vendor FCF; ratios withheld when FX cannot be obtained.
-- Added issuer-level accounting framework evidence ledger, marking all undisclosed standards unknown rather than inventing IFRS restatements.
-- Added sector-aware fixed-anchor comparable numeric scores, coverage penalties and no artificial caps on final industry count.
-- Added industry/currency/accounting audit outputs, research queue, updated Colab notebook, tests and full workflow.
-- Limitations: NO primary-filing reconciliation, calibrated sector expected-return model, verified catalyst extraction or point-in-time test.
+## v0.3.1 (implementation release, live integration still unverified)
 
-## v0.2.1
-- Cross-currency FCF blocked unless comparable; sector and profitability warning queue; corrected reporting.
+- Kept v0.3 **FX conversion and issuer accounting provenance** with no fabricated GAAP→IFRS restatement.
+- Five-market discovery attempts: Korea/Japan/mainland China/Hong Kong/Taiwan. Region symbol patterns, security type guard, source error logs, round-robin fetch selection.
+- Previously discovered names can enter **provisional** research shortlist if vendor identity, sector, profitability, metric coverage and anomaly checks pass. No automatic promotion to a confirmed investment idea.
+- Forward P/E is held out for mixed quote/reporting currencies without EPS unit verification. P/S can be recalculated with an explicitly estimated flow-period exchange rate.
+- Added bounded news RSS headline discovery (not article content), vendor quarter extracts, Korea OpenDART filing-index references with optional secret, issuer source registry and Evidence Book.
+- Added human research decision ledger, including **REJECTED** with decisive counterevidence and conditions to revisit.
+- Added same-input category-weight sensitivity tests and automatic diagnostics. Predictive power, accurate GAAP conversions and official figure reconciliation remain unverified.
+- No orders, trade placement, portfolio state changes or changes to existing other repositories.
 
-## v0.2
-- Broadened from a narrow chip watchlist to 61 manually selected companies across nine research industry groups.
+## v0.3 (416-ticker sample observed, research-only)
 
-## v0.1
-- Initial curated GARP vendor snapshot + peer scores.
+- Expanded beyond curated 61; one real user run reported 416 names including 355 newly discovered.
+- Follow-up audit: Japan 272/416, mainland China 1; all 355 new names excluded by research gating. Not a comprehensive five-market universe.
+- Began USD FX proxies and issuer accounting standard audit. Different-industry 100-point ranking is NOT return-calibrated.
+
+## v0.2.1 / v0.2 / v0.1
+
+- Progressive peer-group sampling, anomaly quarantine, Hong Kong currency handling, curated universe expansion. Historical results reflect differing vendor snapshots and scoring models, so they cannot be interpreted as a controlled study of investment quality.
