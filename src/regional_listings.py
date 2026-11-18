@@ -123,4 +123,6 @@ def fetch_regional(venue, session):
                 break
     rows, detail = parse_records(venue, records)
     detail['source_sha256'] = digest.hexdigest()
+    if venue in {'SSE', 'SSE_STAR', 'SZSE_JSON', 'BSE'}:
+        detail['completeness_check'] = 'PUBLISHER_PAGE_TOTALS_RECONCILED; NO_EXCHANGE_SCOPE_BENCHMARK'
     return rows, detail

@@ -36,6 +36,7 @@ def review_venues(universe, logs, benchmarks=None):
         venue_rows = universe.market.eq(market) & universe.ticker.str.endswith(suffix)
         supported = venue_rows & membership.map(lambda ids: bool(set(sources).intersection(ids)))
         live_supported = venue_rows & membership.map(lambda ids: bool(successful_live.intersection(ids)))
+        vendor_supported = venue_rows & membership.map(lambda ids: 'baostock_security_master' in ids)
         reference = references.get(venue, {})
         reference_source = reference.get('source_id')
         comparable = (reference and reference_source in successful_live and
@@ -47,6 +48,8 @@ def review_venues(universe, logs, benchmarks=None):
                          live_failure_code=statuses.get(live, {}).get('failure_code', ''),
                          export_status=statuses.get(f'export_{venue}', {}).get('status', 'NOT_REQUESTED'),
                          discovered_n=int(venue_rows.sum()), publisher_supported_n=int(supported.sum()),
+                         vendor_supported_n=int(vendor_supported.sum()),
+                         vendor_and_official_overlap_n=int((vendor_supported & live_supported).sum()),
                          live_supported_n=int(live_supported.sum()), benchmark_url=reference.get('url', ''),
                          benchmark_n=reference.get('count', ''), benchmark_as_of=reference.get('as_of', ''),
                          same_scope_count_delta=(int((venue_rows & membership.map(lambda ids: reference_source in ids)).sum())

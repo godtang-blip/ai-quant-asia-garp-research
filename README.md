@@ -25,7 +25,9 @@ JPX and TWSE listing ingestion succeeded in that run. JPX's wider listing file b
 
 With `max_symbols=20`, the smoke test discovered **7,593 unique security codes** before the limit on financial-data fetches. JPX accepted **3,686**, the HKEX workbook accepted **2,781 of 17,355 rows**, and TWSE accepted **1,093**. Source counts can overlap with curated and vendor discovery. The earlier 5,098 figure counts analyzed securities from a different run.
 
-The latest reported smoke test discovered **8,489 securities**, with live retrieval from JPX, HKEX, TWSE, and TPEx. This confirms the TPEx fix on Actions. Source-level counts for this newer run were not supplied. The 7,593 total above is from the preceding smoke test.
+A subsequent reported smoke test discovered **8,489 securities**, with live retrieval from JPX, HKEX, TWSE, and TPEx. This confirms the TPEx fix on Actions. Source-level counts for this newer run were not supplied. The 7,593 total above is from the preceding smoke test.
+
+A later reported Actions run discovered **11,052 securities**, including **2,590 from Korea KIND**. Mainland China still had no successful live listing source. SSE and BSE returned HTTP 403, and SZSE's workbook reset its connection before the JSON fallback returned HTTP 500.
 
 The HKEX adapter keeps its existing Main Board and GEM equity category filters. It preserves separate share classes and trading counters, including different currency counters with different security codes. The 2,781 figure counts accepted security codes. An issuer can contribute several codes. The source log now reports workbook exclusions by category and subcategory, separately from duplicate rows and invalid symbols.
 
@@ -70,7 +72,7 @@ On a runner with approved exchange access, run:
 python -m src.discovery_smoke --output discovery-smoke
 ```
 
-The command runs official sources and configured exports, records per-route errors and provenance, and skips Yahoo discovery and all fundamental fetches. Inspect `12_discovery_sources_log.csv` and `47_venue_coverage.csv`. For Korea, compare the distinct KIND KOSPI and KOSDAQ results with the dated exchange scope, then cross-check the KRX route if a key is available. For mainland China, check SSE Main Board and STAR separately, confirm SZSE workbook or JSON completion, and verify that BSE results exclude NEEQ-only securities. After verifying each source, a 20-symbol run of the existing workflow can test vendor and screening integration. [Exchange scope and export format](docs/FIVE_MARKET_COVERAGE.md)
+The command runs official sources, the independent BaoStock security master, and configured exports. It records per-route errors and provenance and skips Yahoo discovery and all fundamental fetches. In GitHub Actions, enable `discovery_only` for the same behavior and downloadable reports. The cloud test reached no live mainland China listings, including BaoStock, whose native SDK failed at login with network receive error `10002007`. AKShare's investigated functions reuse the official exchange routes. [Source-by-source results and an authorized snapshot option](docs/CHINA_A_SHARE_DISCOVERY.md) Inspect `12_discovery_sources_log.csv` and `47_venue_coverage.csv`. For Korea, compare the distinct KIND KOSPI and KOSDAQ results with the dated exchange scope, then cross-check the KRX route if a key is available. For mainland China, check SSE Main Board and STAR separately, confirm SZSE workbook or JSON completion, and verify that BSE results exclude NEEQ-only securities. After verifying each source, a 20-symbol run of the existing workflow can test vendor and screening integration. [Exchange scope and export format](docs/FIVE_MARKET_COVERAGE.md)
 
 ### Read the results
 

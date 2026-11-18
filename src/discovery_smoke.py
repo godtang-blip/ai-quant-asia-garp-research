@@ -1,4 +1,4 @@
-"""Run official listing discovery without requesting company fundamentals."""
+"""Run official and independent listing discovery without requesting company fundamentals."""
 import argparse
 from pathlib import Path
 
@@ -13,7 +13,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    universe, logs = discover_five_markets(_read_curated(args.universe), 'all5_official', per_region=0)
+    universe, logs = discover_five_markets(_read_curated(args.universe), 'all5_official', per_region=0, security_master=True)
     universe.to_csv(args.output/'11_discovery_universe.csv', index=False)
     logs.to_csv(args.output/'12_discovery_sources_log.csv', index=False)
     venues = review_venues(universe, logs)
