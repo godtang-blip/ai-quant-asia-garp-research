@@ -8,6 +8,7 @@ from io import StringIO
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from .official_universe import JPX_CODE, _market_row
 
@@ -29,7 +30,8 @@ NON_COMMON_TYPES = {'PREFERRED', 'ETF', 'ETN', 'REIT', 'FUND', 'WARRANT', 'BOND'
 
 def load_listing_export(path: Path, venue: str, today: dt.date | None = None):
     market, publisher, pattern, suffix = VENUES[venue]
-    today = today or dt.datetime.now(dt.timezone.utc).date()
+    day_zone = ZoneInfo('Asia/Shanghai') if venue in {'SZSE', 'BSE'} else dt.timezone.utc
+    today = today or dt.datetime.now(day_zone).date()
     raw = path.read_bytes()
     reader = csv.DictReader(StringIO(raw.decode('utf-8-sig')), strict=True)
     if set(reader.fieldnames or ()) != FIELDS or len(reader.fieldnames) != len(FIELDS):

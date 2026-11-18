@@ -183,6 +183,7 @@ def source_krx_list(service_key:str,bas_dt:str,session=None)->list[dict]:
     if not re.fullmatch(r'[0-9]{8}',bas_dt):raise ValueError('KRX basDt must be YYYYMMDD')
     sess=session or requests
     output={};page=1;max_pages=15;total=None
+    seen_issues = set()
     while page<=max_pages:
         try:
             response=sess.get(KRX_API,params={'serviceKey':service_key,'basDt':bas_dt,
@@ -195,6 +196,14 @@ def source_krx_list(service_key:str,bas_dt:str,session=None)->list[dict]:
         body=(payload.get('response',{}) or {}).get('body',{}) if isinstance(payload,dict) else {}
         count=int(body.get('totalCount',0) or 0) if isinstance(body,dict) else 0
         page_rows=parse_krx_list(payload)
+        items = (body.get('items') or {}).get('item', [])
+        items = [items] if isinstance(items, dict) else items
+        identities = {str(item.get('isinCd') or item.get('srtnCd') or '') for item in items}
+        expected = min(1000, max(0, count - (page - 1) * 1000))
+        if ((total is not None and total != count) or len(items) != expected or
+                '' in identities or len(identities) != len(items) or seen_issues.intersection(identities)):
+            raise ValueError('INCOMPLETE_PAGINATION: KRX returned inconsistent totals or repeated issues')
+        seen_issues.update(identities)
         for row in page_rows:output[row['ticker']]=row
         if total is None:total=count
         if page*1000>=count:break

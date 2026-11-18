@@ -12,6 +12,12 @@ from pathlib import Path
 import pandas as pd
 from .discovery import source_nikkei225
 from .official_universe import source_jpx_list, source_twse_list, source_krx_list, previous_weekday, JPX_CODE
+from .evidence import dart_stock_code_map
+from .china_vendor_exports import (API as TUSHARE_API, SOURCE as TUSHARE_URL,
+                                   LIVE_SOURCE_IDS, SOURCE_IDS, fetch_tushare_api, load_tushare_export)
+from .china_security_master import ENDPOINT as BAOSTOCK_ENDPOINT, fetch_baostock
+from .quantsonar_listings import SOURCE_IDS as QUANTSONAR_IDS, URL as QUANTSONAR_URL, fetch_quantsonar
+from .venue_sources import SOURCES, fetch_listing, failure_code, observed_utc
 from .listing_exports import VENUES, load_listing_export
 
 REGIONS = {'Korea': ('kr', (r'^\d{6}\.KS$', r'^\d{6}\.KQ$')),
@@ -66,9 +72,21 @@ def source_region(market:str, max_rows:int=100, page_size:int=50)->tuple[list[di
                   'rejected_bad_symbol':rejected.count('INVALID_MARKET_SYMBOL')}
 
 
-def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)->tuple[pd.DataFrame,pd.DataFrame]:
+def _configured_export_path(venue: str, directory: str | None,
+                            validated_dir: str | None) -> Path | None:
+    if validated_dir and venue in {'SZSE', 'BSE'}:
+        validated = Path(validated_dir) / f'{venue}.csv'
+        if validated.is_file():
+            return validated
+    return Path(directory) / f'{venue}.csv' if directory else None
+
+
+def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90, *, security_master:bool=False,
+                          china_only:bool=False, provisional_inventory:list|None=None)->tuple[pd.DataFrame,pd.DataFrame]:
     if mode not in ('off','all5','regional5','nikkei','all5_official'):
         raise ValueError('discover_mode must be off, all5, regional5, nikkei, all5_official')
+    if china_only:
+        base = base.loc[base.market.eq('China')].copy()
     result=base.copy().fillna('');result['is_new_discovery']=False
     result['discovery_source']='CURATED_LIST'
     result['security_type_status']='CURATED_TICKER_TYPE_NEEDS_CONFIRMATION'
@@ -76,6 +94,11 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
     candidates = []
     provenance = {ticker: ['CURATED_LIST'] for ticker in result.ticker}
     sources = []
+    china_names = {}
+    china_listing_evidence = {}
+    official_china = {'live_SSE', 'live_SSE_STAR', 'live_SZSE', 'live_SZSE_JSON', 'live_BSE'}
+    mainland_exports = {'export_SSE': ('SSE_MAIN', 'SSE_STAR'),
+                        'export_SZSE': ('SZSE_MAIN', 'SZSE_CHINEXT'), 'export_BSE': ('BSE',)}
 
     if mode in ('all5', 'nikkei', 'all5_official'):
         sources.append(('official_nikkei225', 'Japan', 'INDEX',
@@ -94,24 +117,106 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
             ('official_jpx_full_listing', 'Japan', 'LIVE_LISTING', lambda: (source_jpx_list(), {})),
             ('official_twse_listed_companies', 'Taiwan', 'LIVE_LISTING', lambda: (source_twse_list(), {})),
         ])
+        sources.extend((f'live_{venue}', market, 'LIVE_LISTING',
+                        lambda venue=venue: fetch_listing(venue))
+                       for venue, (market, _, _) in SOURCES.items())
+        if security_master or os.environ.get('GARP_ENABLE_BAOSTOCK') == '1':
+            sources.append(('baostock_security_master', 'China', 'THIRD_PARTY_SECURITY_MASTER', fetch_baostock))
+        quant_key = os.environ.get('QUANTSONAR_API_KEY', '').strip()
+        if quant_key:
+            sources.extend((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
+                            lambda venue=venue: fetch_quantsonar(venue, quant_key))
+                           for venue, source_id in QUANTSONAR_IDS.items())
+        elif china_only:
+            logs.extend(dict(source=source_id, market='China', source_url=QUANTSONAR_URL,
+                             status='NOT_CONFIGURED_AUTH_REQUIRED', error='QUANTSONAR_API_KEY absent',
+                             source_kind='THIRD_PARTY_SECURITY_MASTER')
+                        for source_id in QUANTSONAR_IDS.values())
+        token = os.environ.get('TUSHARE_TOKEN', '').strip()
+        if token:
+            sources.extend((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
+                            lambda venue=venue: fetch_tushare_api(venue, token))
+                           for venue, source_id in LIVE_SOURCE_IDS.items())
+        elif china_only:
+            logs.extend(dict(source=source_id, market='China', source_url=TUSHARE_API,
+                             status='NOT_CONFIGURED_AUTH_REQUIRED', error='TUSHARE_TOKEN absent',
+                             source_kind='THIRD_PARTY_SECURITY_MASTER')
+                        for source_id in LIVE_SOURCE_IDS.values())
+        vendor_directory = os.environ.get('GARP_TUSHARE_EXPORT_DIR')
+        validated_vendor = os.environ.get('GARP_VALIDATED_CHINA_VENDOR_DIR')
+        for venue, source_id in SOURCE_IDS.items():
+            path = _configured_export_path(venue, vendor_directory, validated_vendor)
+            if path is not None:
+                sources.append((source_id, 'China', 'THIRD_PARTY_SECURITY_MASTER',
+                                lambda venue=venue, path=path: load_tushare_export(path, venue)))
         directory = os.environ.get('GARP_LISTING_EXPORT_DIR')
+        validated_publisher = os.environ.get('GARP_VALIDATED_CHINA_PUBLISHER_DIR')
         for venue, (market, *_) in VENUES.items():
-            path = Path(directory) / f'{venue}.csv' if directory else None
+            path = _configured_export_path(venue, directory, validated_publisher)
             if path is None or not path.exists():
                 logs.append({'source': f'export_{venue}', 'market': market,
                              'source_kind': 'PUBLISHER_EXPORT', 'status': 'EXPORT_NOT_PROVIDED'})
                 continue
             sources.append((f'export_{venue}', market, 'PUBLISHER_EXPORT',
                             lambda path=path, venue=venue: load_listing_export(path, venue)))
-    if mode in ('all5', 'regional5', 'all5_official'):
+    if per_region > 0 and mode in ('all5', 'regional5', 'all5_official'):
         for market in REGIONS:
             sources.append((f'yahoo_screener_{market}', market, 'VENDOR_SAMPLE',
                             lambda market=market: source_region(market, per_region)))
 
+    if china_only:
+        sources = [source for source in sources if source[1] == 'China']
+        logs = [entry for entry in logs if entry['market'] == 'China']
+    outcomes = {}
     for name, market, kind, fetch in sources:
-        entry = {'source': name, 'market': market, 'source_kind': kind}
+        entry = {'source': name, 'market': market, 'source_kind': kind,
+                 'observed_utc': observed_utc()}
+        if name == 'baostock_security_master':
+            entry.update(source_url=BAOSTOCK_ENDPOINT,
+                         scope='Active A-share master and dated provider inventory',
+                         evidence_classification='THIRD_PARTY_SECURITY_MASTER')
+        if name in QUANTSONAR_IDS.values():
+            entry.update(source_url=QUANTSONAR_URL, evidence_classification='THIRD_PARTY_SECURITY_MASTER')
+        if name in LIVE_SOURCE_IDS.values():
+            entry.update(source_url=TUSHARE_API, evidence_classification='THIRD_PARTY_SECURITY_MASTER')
+        if name in SOURCE_IDS.values():
+            entry.update(source_url=TUSHARE_URL, evidence_classification='THIRD_PARTY_SECURITY_MASTER')
+        if name in official_china:
+            entry['evidence_classification'] = 'OFFICIAL_EXCHANGE_LISTING'
+        if name in mainland_exports:
+            primary = {
+                'export_SSE': ('live_SSE', 'live_SSE_STAR'),
+                'export_SZSE': ('live_SZSE', 'live_SZSE_JSON'),
+                'export_BSE': ('live_BSE',),
+            }[name]
+            succeeded = [outcomes.get(route, {}).get('status') == 'OK' for route in primary]
+            vendor = outcomes.get('baostock_security_master', {})
+            vendor_counts = json.loads(vendor.get('scope_counts') or '{}')
+            vendor_has_scope = (vendor.get('retrieval_mode') == 'LIVE_VENDOR_SDK' and
+                                all(vendor_counts.get(board, 0) > 0 for board in mainland_exports[name]))
+            official_has_scope = all(succeeded) if name == 'export_SSE' else any(succeeded)
+            if official_has_scope or vendor_has_scope:
+                entry.update(status='SKIPPED_LIVE_LISTING_AVAILABLE')
+                logs.append(entry)
+                continue
+        if name.startswith('live_'):
+            _, url, scope = SOURCES[name.removeprefix('live_')]
+            entry.update(source_url=url, scope=scope)
+        if name in {'live_SZSE_JSON', 'live_SSE_STAR'}:
+            primary = outcomes['live_SZSE' if name == 'live_SZSE_JSON' else 'live_SSE']
+            if (name == 'live_SZSE_JSON' and primary['status'] == 'OK') or primary.get('failure_code') in {
+                'FORBIDDEN', 'PROXY_FORBIDDEN', 'RATE_LIMITED', 'AUTHENTICATION_FAILED',
+            }:
+                entry.update(status='SKIPPED_PRIMARY_ROUTE', error=primary.get('failure_code') or 'Workbook succeeded')
+                logs.append(entry)
+                continue
         try:
             rows, detail = fetch()
+            provisional = detail.get('provisional_rows', [])
+            if detail.get('failure_stage'):
+                entry['evidence_classification'] = 'UNVERIFIED_CANDIDATE'
+            if provisional_inventory is not None:
+                provisional_inventory.extend(provisional)
             cleaned = []
             source_urls = set()
             for row in rows:
@@ -120,6 +225,10 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
                     continue
                 row = {**row, 'ticker': ticker}
                 row.setdefault('security_type_status', 'OFFICIAL_INDEX_TYPE_NEEDS_CONFIRMATION')
+                if name in official_china or kind == 'THIRD_PARTY_SECURITY_MASTER' or name in mainland_exports:
+                    china_names.setdefault(ticker, {})[name] = row['company']
+                    classification = entry.get('evidence_classification', 'PUBLISHER_EXPORT')
+                    china_listing_evidence.setdefault(ticker, set()).add(classification)
                 cleaned.append(row)
                 source_urls.add(row['discovery_source'])
                 refs = provenance.setdefault(ticker, [])
@@ -127,23 +236,76 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
                     refs.append(name)
             candidates.extend(cleaned)
             url = detail.get('source_url') or ' | '.join(sorted(source_urls))
-            entry.update(status='OK' if cleaned else 'NO_VALID_ROWS',
+            entry.update(status=('OK' if cleaned else 'PROVISIONAL_INVENTORY_ONLY'
+                                 if detail.get('failure_stage') else 'NO_VALID_ROWS'),
+                         failure_code=detail.get('failure_code', ''),
+                         failure_stage=detail.get('failure_stage', ''),
+                         provisional_inventory_n=len(provisional),
+                         sdk_metrics=json.dumps(detail['sdk_metrics']) if 'sdk_metrics' in detail else '',
                          received=detail.get('received', len(rows)), accepted_pattern=len(cleaned),
                          rejected_non_equity=detail.get('rejected_non_equity', 0),
                          rejected_bad_symbol=detail.get('rejected_bad_symbol', 0) + len(rows) - len(cleaned),
                          source_url=url if kind != 'VENDOR_SAMPLE' else '',
-                         source_asof=detail.get('source_asof', ''), source_sha256=detail.get('source_sha256', ''))
+                         scope=detail.get('scope', ''), duplicate_rows=detail.get('duplicate_rows', 0),
+                         excluded_by_category=detail.get('excluded_by_category', ''),
+                         source_asof=detail.get('source_asof', ''), source_sha256=detail.get('source_sha256', ''),
+                         scope_counts=detail.get('scope_counts', ''),
+                         unknown_classification=detail.get('unknown_classification', ''),
+                         inactive_or_after_cutoff=detail.get('inactive_or_after_cutoff', ''),
+                         completeness_check=detail.get('completeness_check', ''),
+                         retrieval_mode=detail.get('retrieval_mode', ''),
+                         response_diagnostics=json.dumps(detail['response_diagnostics'])
+                         if 'response_diagnostics' in detail else '')
         except Exception as exc:
-            entry.update(status='FAILED_NO_FALLBACK', error=f'{type(exc).__name__}: {str(exc)[:250]}')
+            code = failure_code(exc)
+            entry.update(status='FAILED_NO_FALLBACK', failure_code=code,
+                         error=f'{type(exc).__name__}: {str(exc)[:250]}')
+            if hasattr(exc, 'diagnostics'):
+                entry['response_diagnostics'] = json.dumps(exc.diagnostics)
+            if code in {'INCOMPLETE_OR_STALE_SOURCE', 'INCOMPLETE_PAGINATION'}:
+                entry['evidence_classification'] = 'INCOMPLETE_OR_STALE_SOURCE'
         logs.append(entry)
+        outcomes[name] = entry
     if candidates:
         added = pd.DataFrame(candidates)
         added = added[~added.ticker.isin(set(result.ticker))].drop_duplicates('ticker')
         result = pd.concat([result, added], ignore_index=True)
     result['listing_source_ids'] = result.ticker.map(lambda ticker: json.dumps(provenance[ticker]))
+    if mode == 'all5_official':
+        result['listing_evidence_class'] = result.ticker.map(
+            lambda ticker: '|'.join(sorted(china_listing_evidence.get(ticker, {'UNVERIFIED_CANDIDATE'}))))
+        result.loc[~result.market.eq('China'), 'listing_evidence_class'] = ''
+        result['listing_source_names'] = result.ticker.map(
+            lambda ticker: json.dumps(china_names.get(ticker, {}), ensure_ascii=False))
+        result['listing_name_disagreement'] = result.ticker.map(
+            lambda ticker: len({' '.join(name.casefold().split()) for name in china_names.get(ticker, {}).values()}) > 1)
+    if mode == 'all5_official' and not china_only:
+        dart_log = {'source': 'opendart_issuer_crosscheck', 'market': 'Korea',
+                    'source_kind': 'ISSUER_IDENTITY_ONLY', 'observed_utc': observed_utc(),
+                    'source_url': 'https://opendart.fss.or.kr/api/corpCode.xml',
+                    'scope': 'Identity match for already discovered Korean tickers; no listing or type assertion'}
+        dart_key = os.environ.get('DART_API_KEY')
+        if dart_key:
+            try:
+                mapping = dart_stock_code_map(dart_key)
+                korean = result.market.eq('Korea')
+                result.loc[korean, 'dart_corp_code'] = result.loc[korean, 'ticker'].map(
+                    lambda ticker: mapping.get(ticker.split('.')[0], {}).get('corp_code', ''))
+                result.loc[korean, 'dart_corp_name'] = result.loc[korean, 'ticker'].map(
+                    lambda ticker: mapping.get(ticker.split('.')[0], {}).get('corp_name', ''))
+                dart_log.update(status='OK', received=len(mapping),
+                                identity_matches=int(result.loc[korean, 'dart_corp_code'].ne('').sum()))
+            except Exception as exc:
+                # Exception messages can contain the key in a request URL.
+                dart_log.update(status='FAILED_NO_FALLBACK', failure_code=failure_code(exc),
+                                error=type(exc).__name__)
+        else:
+            dart_log.update(status='NOT_CONFIGURED_AUTH_REQUIRED', error='DART_API_KEY absent')
+        logs.append(dart_log)
     columns = ['source', 'status', 'received', 'accepted_pattern', 'rejected_non_equity',
                'rejected_bad_symbol', 'error', 'market', 'source_kind', 'source_url',
-               'source_asof', 'source_sha256']
+               'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows', 'excluded_by_category', 'identity_matches',
+               'evidence_classification', 'scope_counts', 'unknown_classification', 'completeness_check', 'retrieval_mode', 'inactive_or_after_cutoff', 'response_diagnostics', 'failure_stage', 'provisional_inventory_n', 'sdk_metrics']
     log = pd.DataFrame(logs, columns=columns)
     for column in ('received', 'accepted_pattern', 'rejected_non_equity', 'rejected_bad_symbol'):
         log[column] = log[column].fillna(0).astype(int)

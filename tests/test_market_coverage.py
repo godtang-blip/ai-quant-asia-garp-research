@@ -131,6 +131,7 @@ def test_five_market_coverage_and_fundamentals_audited_separately(tmp_path, monk
 
     monkeypatch.delenv('PUBLIC_DATA_API_KEY', raising=False)
     monkeypatch.delenv('GARP_LISTING_EXPORT_DIR', raising=False)
+    monkeypatch.setattr(discovery, 'fetch_listing', unavailable)
     monkeypatch.setattr(discovery, 'source_jpx_list', unavailable)
     monkeypatch.setattr(discovery, 'source_nikkei225', unavailable)
     monkeypatch.setattr(discovery, 'source_twse_list', taiwan)
