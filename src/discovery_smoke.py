@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from .discovery_review import review_venues
+from .china_coverage_report import china_reports
+from .discovery_review import read, review_venues
 from .discovery_v031 import discover_five_markets
 from .v031 import _read_curated
 
@@ -14,6 +15,8 @@ def main():
     parser.add_argument('--universe', type=Path, default=Path('data/universe.csv'))
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--china-only', action='store_true', help='Run mainland China listings sources only')
+    parser.add_argument('--china-benchmarks', type=Path,
+                        help='Optional dated, scope-matched official China board CSV')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     provisional = []
@@ -29,6 +32,10 @@ def main():
     if args.china_only:
         venues = venues.loc[venues.market.eq('China')]
     venues.to_csv(args.output/'47_venue_coverage.csv', index=False)
+    coverage, overlaps = china_reports(
+        universe, logs, read(args.china_benchmarks) if args.china_benchmarks else None)
+    coverage.to_csv(args.output/'49_china_board_coverage.csv', index=False)
+    overlaps.to_csv(args.output/'50_china_source_overlap.csv', index=False)
     print(venues[['venue', 'live_status', 'successful_live_sources', 'live_supported_n']].to_string(index=False))
 
 

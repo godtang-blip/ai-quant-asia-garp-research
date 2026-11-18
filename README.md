@@ -37,6 +37,8 @@ SZSE and BSE still lack verified live retrieval. An authorized, dated Tushare st
 
 The latest inspected run again confirmed the SSE counts and reported a BaoStock timeout within security-master retrieval after successful login and calendar retrieval. The workflow now offers a China-only diagnostic, separate BaoStock call and iteration timings, and a separate artifact for dated Shenzhen inventory candidates pending verification. Those provisional candidates are excluded from screening. [Diagnostic results and usage](docs/CHINA_A_SHARE_DISCOVERY.md#baostock-inventory-first-diagnostics)
 
+China-only runs now publish per-board coverage and a provider overlap report for SSE, SZSE and BSE. Optional entitled Tushare access and dated vendor imports are kept separate from official listing evidence. Eastmoney board probes were blocked before an origin response, and no Eastmoney adapter was enabled. Live Shenzhen and Beijing coverage remains unresolved. [Unified China diagnostics and authorized acquisition](docs/CHINA_A_SHARE_DISCOVERY.md#unified-china-discovery-and-authorized-tushare-api)
+
 The HKEX adapter keeps its existing Main Board and GEM equity category filters. It preserves separate share classes and trading counters, including different currency counters with different security codes. The 2,781 figure counts accepted security codes. An issuer can contribute several codes. The source log now reports workbook exclusions by category and subcategory, separately from duplicate rows and invalid symbols.
 
 ## Current Status and Remaining Limitations

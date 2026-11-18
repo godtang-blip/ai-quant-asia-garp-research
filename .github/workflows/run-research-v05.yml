@@ -89,6 +89,7 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
           GARP_CHINA_ONLY: ${{ inputs.china_only }}

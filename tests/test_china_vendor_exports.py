@@ -45,3 +45,62 @@ def test_rejects_stale_or_mixed_exchange_snapshot(tmp_path, row, reason):
     path.write_text(HEADER + row + '\n', encoding='utf-8')
     with pytest.raises(ListingError, match=reason):
         load_tushare_export(path, 'BSE', AS_OF)
+
+
+@pytest.mark.parametrize(('venue', 'rows', 'expected'), [
+    ('SZSE', [('000001.SZ','000001','Main','SZSE','主板','L','19910403',None),
+              ('300001.SZ','300001','ChiNext','SZSE','创业板','L','20091030',None)],
+     ['000001.SZ','300001.SZ']),
+    ('BSE', [('920001.BJ','920001','Listed','BSE','北交所','L','20220101',None)],
+     ['920001.BJ']),
+])
+def test_tushare_live_request_uses_fixed_tls_endpoint(venue, rows, expected):
+    import json
+    from types import SimpleNamespace
+    from src.china_vendor_exports import fetch_tushare_api
+
+    class Reply:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def iter_content(self, chunk_size):
+            yield json.dumps({'code':0, 'data':{
+                'fields':['ts_code','symbol','name','exchange','market','list_status','list_date','delist_date'],
+                'items':rows,
+            }}).encode()
+
+    def post(url, **kwargs):
+        assert url == 'https://api.tushare.pro' and kwargs['allow_redirects'] is False
+        assert kwargs['json']['params'] == {'exchange':venue, 'list_status':'L'}
+        return Reply()
+
+    found, detail = fetch_tushare_api(venue, 'fixture-only', SimpleNamespace(post=post))
+    assert [row['ticker'] for row in found] == expected
+    assert detail['retrieval_mode'] == 'LIVE_VENDOR_API'
+    assert detail['source_asof'] == '' and 'PROVIDER_DATE_AND_TOTAL_UNVERIFIED' in detail['completeness_check']
+
+
+def test_tushare_does_not_expose_provider_error_body():
+    from types import SimpleNamespace
+    from src.china_vendor_exports import fetch_tushare_api
+
+    class Reply:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def iter_content(self, chunk_size):
+            yield b'{"code":123,"msg":"sentinel-secret"}'
+
+    with pytest.raises(ListingError, match='check token and entitlement') as exc:
+        fetch_tushare_api('BSE', 'sentinel-secret', SimpleNamespace(post=lambda *a, **kw: Reply()))
+    assert 'sentinel-secret' not in str(exc.value)
