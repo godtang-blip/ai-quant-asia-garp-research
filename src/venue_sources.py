@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from .official_universe import _market_row
+from .regional_listings import ROUTES, SYMBOLS, fetch_regional
 
 TPEX = 'https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O'
 HKEX = 'https://www.hkex.com.hk/eng/services/trading/securities/securitieslists/ListOfSecurities.xlsx'
@@ -18,6 +19,7 @@ SOURCES = {
     'TPEX': ('Taiwan', TPEX, 'TPEx company disclosures; excludes Emerging Stock Board'),
     'HKEX': ('Hong Kong', HKEX, 'HKEX workbook Equity securities classified as Equity Securities (Main Board/GEM); excludes REITs, warrants and funds'),
     'SZSE': ('China', SZSE, 'SZSE A-share listing worksheet; excludes B shares and other instruments'),
+    **ROUTES,
 }
 
 
@@ -41,7 +43,7 @@ def parse_records(venue, records):
         if venue == 'SZSE' and re.fullmatch(r'[0-9]{1,6}', code):
             code = code.zfill(6)
         pattern, suffix = {'HKEX': (r'[0-9]{4,5}', '.HK'), 'SZSE': (r'[0-9]{6}', '.SZ'),
-                           'TPEX': (r'[0-9]{4}', '.TWO')}[venue]
+                           'TPEX': (r'[0-9]{4}', '.TWO'), **SYMBOLS}[venue]
         if not re.fullmatch(pattern, code) or not int(code) or not name:
             invalid += 1
             continue
@@ -102,6 +104,8 @@ def hkex_records(raw, excluded_categories):
 
 
 def fetch_listing(venue, session=requests):
+    if venue in ROUTES:
+        return fetch_regional(venue, session)
     _, url, _ = SOURCES[venue]
     with session.get(url, timeout=(8, 25), stream=True) as response:
         response.raise_for_status()

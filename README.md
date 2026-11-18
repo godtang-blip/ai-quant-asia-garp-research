@@ -21,17 +21,24 @@ The GitHub Actions run analyzed **5,098 securities**. Of these, **4,800 received
 
 JPX and TWSE listing ingestion succeeded in that run. JPX's wider listing file brought many more Japanese securities into discovery and exposed gaps in Korea, mainland China, Hong Kong, and Taiwan's TPEx segment. “Full-universe” here means the run analyzed the available discovery universe. Exchange scope still requires independent verification.
 
-## Latest GitHub Actions discovery smoke test
+## GitHub Actions discovery smoke tests
 
 With `max_symbols=20`, the smoke test discovered **7,593 unique security codes** before the limit on financial-data fetches. JPX accepted **3,686**, the HKEX workbook accepted **2,781 of 17,355 rows**, and TWSE accepted **1,093**. Source counts can overlap with curated and vendor discovery. The earlier 5,098 figure counts analyzed securities from a different run.
+
+The latest reported smoke test discovered **8,489 securities**, with live retrieval from JPX, HKEX, TWSE, and TPEx. This confirms the TPEx fix on Actions. Source-level counts for this newer run were not supplied. The 7,593 total above is from the preceding smoke test.
 
 The HKEX adapter keeps its existing Main Board and GEM equity category filters. It preserves separate share classes and trading counters, including different currency counters with different security codes. The 2,781 figure counts accepted security codes. An issuer can contribute several codes. The source log now reports workbook exclusions by category and subcategory, separately from duplicate rows and invalid symbols.
 
 ## Current Status and Remaining Limitations
 
-- **TPEx.** The smoke test reached the endpoint but failed the schema check. The parser now accepts the reported OpenAPI fields `SecuritiesCompanyCode`, `CompanyName`, and `CompanyAbbreviation` alongside the earlier Chinese fields. It retains ticker validation, source provenance, and downstream vendor security-type checks. The English-field regression uses a fixture based on the reported shape. The official endpoint and its documentation were blocked by this cloud's proxy, so acceptance of live rows still needs confirmation on Actions.
-- **SZSE.** The Actions workbook request reset its connection. The cloud proxy blocked the workbook, public stock-list pages, and a probe of the official report service's JSON route before an origin response. The adapter now reports connection resets explicitly. The JSON route's schema and pagination remain unverified and it is not enabled as a fallback. A dated SZSE publisher export remains the supported alternative.
-- **KRX, SSE, and BSE.** KRX listed-issue ingestion requires an authorized `PUBLIC_DATA_API_KEY`, which was absent in the smoke test. SSE and BSE still lack live adapters. Dated publisher exports can supplement gaps. The objective remains genuine five-market discovery without country quotas. [Venue-by-venue findings and next actions](docs/FIVE_MARKET_DISCOVERY_MILESTONE.md)
+The Korea and mainland China changes below are separate from the latest successful Actions retrievals. The discovery-only cloud check returned **zero accepted live Korean securities** and **zero accepted live mainland Chinese securities**. The proxy returned CONNECT 403 for the publisher routes. Credited listings, source scope and common-equity eligibility still need validation.
+
+| Market | Automated routes in official discovery mode | Verified scope and remaining inputs |
+|---|---|---|
+| Korea | KRX listed-issue API, plus independent public KIND KOSPI and KOSDAQ company downloads | KRX needs `PUBLIC_DATA_API_KEY` and optionally a trading-date override. KIND uses no API key; both market downloads were blocked in the cloud. OpenDART with `DART_API_KEY` can annotate issuer identity for already discovered tickers and does not establish listing membership or security type. Dated KOSPI/KOSDAQ publisher exports are the manual fallback. |
+| Mainland China | SSE Main Board and STAR A-share queries, existing SZSE A-share workbook with a JSON route after a transient/workbook failure, and the BSE listed-company table | All new routes are fixture-tested. The Actions SZSE workbook reset its connection in the earlier smoke test; the cloud proxy denied the workbook, JSON route, SSE, and BSE. B shares and NEEQ-only listings are outside the configured scope. The new routes need no exchange credentials. Dated SSE, SZSE and BSE publisher exports remain supported. |
+
+JSON pagination rejects incomplete or repeated pages. The SZSE alternate route is skipped when the workbook succeeds or access is explicitly denied or rate-limited. Publisher matches are listing candidates and still face the existing vendor security-type checks. The objective remains genuine five-market discovery without country quotas.
 - **Separate cloud observation.** An earlier cloud probe retrieved **zero external securities** and carried forward **61 existing curated names**. That probe and the Actions runs used different environments.
 - **Candidate follow-up.** The review tool preserves the original scores and decisions while separating fundamental failures from potentially recoverable exclusions, such as missing financials, unresolved industry classification, or data-quality flags. It can compare the original screen with a separate rerun on corrected inputs. Automated data repair and autonomous reassessment remain open work. The Korea investigation queue is separate from global rankings.
 - **Filing research in development.** Gemini v0.5.2 is a separate feature branch for source-grounded filing research. It has yet to be integrated, and the active GitHub Actions workflow performs no live Gemini analysis. [Gemini development branch](https://github.com/godtang-blip/ai-quant-asia-garp-research/tree/codex/gemini-filing-research-v052)
@@ -54,6 +61,16 @@ python -m pip install -r requirements.txt
 python -m pytest -q tests
 python -m src.v051 --discover-mode all5_official --max-symbols 150 --output outputs
 ```
+
+### Validate listings without fetching financials
+
+On a runner with approved exchange access, run:
+
+```bash
+python -m src.discovery_smoke --output discovery-smoke
+```
+
+The command runs official sources and configured exports, records per-route errors and provenance, and skips Yahoo discovery and all fundamental fetches. Inspect `12_discovery_sources_log.csv` and `47_venue_coverage.csv`. For Korea, compare the distinct KIND KOSPI and KOSDAQ results with the dated exchange scope, then cross-check the KRX route if a key is available. For mainland China, check SSE Main Board and STAR separately, confirm SZSE workbook or JSON completion, and verify that BSE results exclude NEEQ-only securities. After verifying each source, a 20-symbol run of the existing workflow can test vendor and screening integration. [Exchange scope and export format](docs/FIVE_MARKET_COVERAGE.md)
 
 ### Read the results
 

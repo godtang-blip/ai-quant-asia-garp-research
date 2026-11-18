@@ -127,3 +127,103 @@ def test_tpex_schema_error_exposes_keys_not_values():
     with pytest.raises(ListingError, match='observed keys: changed_field') as exc:
         fetch_listing('TPEX', response(b'[{"changed_field":"do-not-log"}]'))
     assert 'do-not-log' not in str(exc.value)
+
+
+@pytest.mark.parametrize(('venue', 'code', 'suffix'), [
+    ('KIND_KOSPI', '5930', '005930.KS'), ('KIND_KOSDAQ', '247540', '247540.KQ'),
+])
+def test_kind_download_keeps_market_suffix_and_unverified_type(venue, code, suffix):
+    raw = (f'<meta charset="utf-8"><table><tr><th>회사명</th><th>종목코드</th></tr>'
+           f'<tr><td>Issuer</td><td>{code}</td></tr></table>').encode()
+    rows, info = fetch_listing(venue, response(raw))
+    assert rows[0]['ticker'] == suffix
+    assert rows[0]['security_type_status'] == 'OFFICIAL_ISSUER_LIST_TYPE_CHECK_VENDOR'
+    assert 'kind.krx.co.kr' in info['source_url']
+    with pytest.raises(ListingError, match='KIND'):
+        fetch_listing(venue, response(b'<html>Unknown layout</html>'))
+
+
+@pytest.mark.parametrize(('venue', 'payload', 'ticker'), [
+    ('SSE', {'pageHelp': {'pageCount': 1, 'total': 1,
+        'data': [{'A_STOCK_CODE': '600000', 'COMPANY_ABBR': 'Fixture'}]}}, '600000.SS'),
+    ('SSE_STAR', {'pageHelp': {'pageCount': 1, 'total': 1,
+        'data': [{'A_STOCK_CODE': '688001', 'COMPANY_ABBR': 'Fixture'}]}}, '688001.SS'),
+    ('SZSE_JSON', [{'metadata': {'pagecount': 1, 'recordcount': 1},
+        'data': [{'agdm': '000001', 'agjc': 'Fixture'}]}], '000001.SZ'),
+    ('BSE', [{'totalPages': 1, 'totalElements': 1,
+        'content': [{'xxzqdm': '920001', 'xxzqjc': 'Fixture'}]}], '920001.BJ'),
+])
+def test_paginated_exchange_payloads(venue, payload, ticker):
+    raw = json.dumps(payload).encode()
+    if venue == 'BSE':
+        raw = b'callback(' + raw + b');'
+    session = response(raw)
+    session.post = session.get
+    rows, detail = fetch_listing(venue, session)
+    assert rows[0]['ticker'] == ticker and detail['received'] == 1
+
+
+def test_incomplete_sse_pagination_never_returns_partial_result(monkeypatch):
+    monkeypatch.setattr('src.regional_listings.time.sleep', lambda _: None)
+    payload = {'pageHelp': {'pageCount': 2, 'total': 2,
+        'data': [{'A_STOCK_CODE': '600000', 'COMPANY_ABBR': 'Fixture'}]}}
+    with pytest.raises(ListingError) as exc:
+        fetch_listing('SSE', response(json.dumps(payload).encode()))
+    assert exc.value.code == 'INCOMPLETE_PAGINATION'
+
+
+def test_dart_crosschecks_but_never_creates_listings(monkeypatch):
+    from src import discovery_v031 as discovery
+
+    monkeypatch.delenv('PUBLIC_DATA_API_KEY', raising=False)
+    monkeypatch.setenv('DART_API_KEY', 'test')
+    monkeypatch.setattr(discovery, 'dart_stock_code_map', lambda key: {
+        '005930': {'corp_code':'00000001', 'corp_name':'Existing'},
+        '999999': {'corp_code':'00000002', 'corp_name':'DART-only'},
+    })
+    monkeypatch.setattr(discovery, 'source_nikkei225', lambda: [])
+    monkeypatch.setattr(discovery, 'source_jpx_list', lambda: [])
+    monkeypatch.setattr(discovery, 'source_twse_list', lambda: [])
+    monkeypatch.setattr(discovery, 'fetch_listing', lambda venue: ([], {}))
+    frame, log = discovery.discover_five_markets(pd.DataFrame([
+        dict(ticker='005930.KS', market='Korea')]), 'all5_official', 0)
+    assert frame.ticker.tolist() == ['005930.KS']
+    assert frame.dart_corp_code.tolist() == ['00000001']
+    assert json.loads(frame.listing_source_ids.iloc[0]) == ['CURATED_LIST']
+    assert log.set_index('source').loc['opendart_issuer_crosscheck', 'identity_matches'] == 1
+
+
+def test_kind_live_count_is_independent_of_krx_api_status():
+    universe = pd.DataFrame([dict(ticker='005930.KS', market='Korea',
+                                  listing_source_ids='["live_KIND_KOSPI"]')])
+    logs = pd.DataFrame([dict(source='live_KIND_KOSPI', status='OK'),
+                         dict(source='official_krx_listed_issues', status='NOT_CONFIGURED_AUTH_REQUIRED')])
+    row = review_venues(universe, logs).set_index('venue').loc['KRX_KOSPI']
+    assert row.live_supported_n == 1 and row.successful_live_sources == 'live_KIND_KOSPI'
+    assert row.product_status == 'UNRESOLVED_SCOPE_VERIFICATION'
+
+
+@pytest.mark.parametrize(('failure', 'expected'), [
+    (requests.ConnectionError('Connection reset by peer'), True),
+    (requests.exceptions.ProxyError('CONNECT 403'), False),
+])
+def test_szse_json_route_respects_workbook_access_denial(monkeypatch, failure, expected):
+    from src import discovery_v031 as discovery
+
+    for name in ('source_nikkei225', 'source_jpx_list', 'source_twse_list'):
+        monkeypatch.setattr(discovery, name, lambda: [])
+    for key in ('PUBLIC_DATA_API_KEY', 'DART_API_KEY', 'GARP_LISTING_EXPORT_DIR'):
+        monkeypatch.delenv(key, raising=False)
+    calls = []
+
+    def fetch(venue):
+        calls.append(venue)
+        if venue == 'SZSE':
+            raise failure
+        return [], {}
+
+    monkeypatch.setattr(discovery, 'fetch_listing', fetch)
+    monkeypatch.setattr(discovery, 'source_region', lambda *args: pytest.fail('Yahoo discovery called'))
+    discovery.discover_five_markets(pd.DataFrame([dict(ticker='005930.KS', market='Korea')]),
+                                    'all5_official', 0)
+    assert ('SZSE_JSON' in calls) is expected

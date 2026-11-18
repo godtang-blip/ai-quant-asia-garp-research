@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 from .discovery import source_nikkei225
 from .official_universe import source_jpx_list, source_twse_list, source_krx_list, previous_weekday, JPX_CODE
+from .evidence import dart_stock_code_map
 from .venue_sources import SOURCES, fetch_listing, failure_code, observed_utc
 from .listing_exports import VENUES, load_listing_export
 
@@ -107,17 +108,26 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
                 continue
             sources.append((f'export_{venue}', market, 'PUBLISHER_EXPORT',
                             lambda path=path, venue=venue: load_listing_export(path, venue)))
-    if mode in ('all5', 'regional5', 'all5_official'):
+    if per_region > 0 and mode in ('all5', 'regional5', 'all5_official'):
         for market in REGIONS:
             sources.append((f'yahoo_screener_{market}', market, 'VENDOR_SAMPLE',
                             lambda market=market: source_region(market, per_region)))
 
+    outcomes = {}
     for name, market, kind, fetch in sources:
         entry = {'source': name, 'market': market, 'source_kind': kind,
                  'observed_utc': observed_utc()}
         if name.startswith('live_'):
             _, url, scope = SOURCES[name.removeprefix('live_')]
             entry.update(source_url=url, scope=scope)
+        if name in {'live_SZSE_JSON', 'live_SSE_STAR'}:
+            primary = outcomes['live_SZSE' if name == 'live_SZSE_JSON' else 'live_SSE']
+            if (name == 'live_SZSE_JSON' and primary['status'] == 'OK') or primary.get('failure_code') in {
+                'FORBIDDEN', 'PROXY_FORBIDDEN', 'RATE_LIMITED', 'AUTHENTICATION_FAILED',
+            }:
+                entry.update(status='SKIPPED_PRIMARY_ROUTE', error=primary.get('failure_code') or 'Workbook succeeded')
+                logs.append(entry)
+                continue
         try:
             rows, detail = fetch()
             cleaned = []
@@ -146,14 +156,38 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
         except Exception as exc:
             entry.update(status='FAILED_NO_FALLBACK', failure_code=failure_code(exc), error=f'{type(exc).__name__}: {str(exc)[:250]}')
         logs.append(entry)
+        outcomes[name] = entry
     if candidates:
         added = pd.DataFrame(candidates)
         added = added[~added.ticker.isin(set(result.ticker))].drop_duplicates('ticker')
         result = pd.concat([result, added], ignore_index=True)
     result['listing_source_ids'] = result.ticker.map(lambda ticker: json.dumps(provenance[ticker]))
+    if mode == 'all5_official':
+        dart_log = {'source': 'opendart_issuer_crosscheck', 'market': 'Korea',
+                    'source_kind': 'ISSUER_IDENTITY_ONLY', 'observed_utc': observed_utc(),
+                    'source_url': 'https://opendart.fss.or.kr/api/corpCode.xml',
+                    'scope': 'Identity match for already discovered Korean tickers; no listing or type assertion'}
+        dart_key = os.environ.get('DART_API_KEY')
+        if dart_key:
+            try:
+                mapping = dart_stock_code_map(dart_key)
+                korean = result.market.eq('Korea')
+                result.loc[korean, 'dart_corp_code'] = result.loc[korean, 'ticker'].map(
+                    lambda ticker: mapping.get(ticker.split('.')[0], {}).get('corp_code', ''))
+                result.loc[korean, 'dart_corp_name'] = result.loc[korean, 'ticker'].map(
+                    lambda ticker: mapping.get(ticker.split('.')[0], {}).get('corp_name', ''))
+                dart_log.update(status='OK', received=len(mapping),
+                                identity_matches=int(result.loc[korean, 'dart_corp_code'].ne('').sum()))
+            except Exception as exc:
+                # Exception messages can contain the key in a request URL.
+                dart_log.update(status='FAILED_NO_FALLBACK', failure_code=failure_code(exc),
+                                error=type(exc).__name__)
+        else:
+            dart_log.update(status='NOT_CONFIGURED_AUTH_REQUIRED', error='DART_API_KEY absent')
+        logs.append(dart_log)
     columns = ['source', 'status', 'received', 'accepted_pattern', 'rejected_non_equity',
                'rejected_bad_symbol', 'error', 'market', 'source_kind', 'source_url',
-               'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows', 'excluded_by_category']
+               'source_asof', 'source_sha256', 'scope', 'observed_utc', 'failure_code', 'duplicate_rows', 'excluded_by_category', 'identity_matches']
     log = pd.DataFrame(logs, columns=columns)
     for column in ('received', 'accepted_pattern', 'rejected_non_equity', 'rejected_bad_symbol'):
         log[column] = log[column].fillna(0).astype(int)

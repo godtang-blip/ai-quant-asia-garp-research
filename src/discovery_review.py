@@ -26,22 +26,31 @@ def review_venues(universe, logs, benchmarks=None):
     rows = []
     for venue, (market, _, _, suffix) in VENUES.items():
         live = BASE_LIVE.get(venue, f'live_{venue}' if venue in SOURCES else '')
-        sources = [source for source in (live, f'export_{venue}') if statuses.get(source, {}).get('status') == 'OK']
+        alternatives = {'KRX_KOSPI': ('live_KIND_KOSPI',), 'KRX_KOSDAQ': ('live_KIND_KOSDAQ',),
+                        'SZSE': ('live_SZSE_JSON',), 'SSE': ('live_SSE_STAR',)}.get(venue, ())
+        live_routes = (live, *alternatives)
+        successful_live = {route for route in live_routes if statuses.get(route, {}).get('status') == 'OK'}
+        sources = [*sorted(successful_live)]
+        if statuses.get(f'export_{venue}', {}).get('status') == 'OK':
+            sources.append(f'export_{venue}')
         venue_rows = universe.market.eq(market) & universe.ticker.str.endswith(suffix)
         supported = venue_rows & membership.map(lambda ids: bool(set(sources).intersection(ids)))
-        live_supported = venue_rows & membership.map(lambda ids: bool(live and live in ids))
+        live_supported = venue_rows & membership.map(lambda ids: bool(successful_live.intersection(ids)))
         reference = references.get(venue, {})
-        comparable = (reference and live in sources and reference.get('source_id') == live and
-                      str(reference.get('as_of')) == str(statuses[live].get('source_asof')) and
+        reference_source = reference.get('source_id')
+        comparable = (reference and reference_source in successful_live and
+                      str(reference.get('as_of')) == str(statuses[reference_source].get('source_asof')) and
                       bool(reference.get('as_of')) and str(reference.get('scope_comparable')).lower() == 'true')
         rows.append(dict(venue=venue, market=market, live_source=live,
                          live_status=statuses.get(live, {}).get('status', 'NOT_REQUESTED' if live else 'NO_LIVE_CONNECTOR'),
+                         successful_live_sources='|'.join(sorted(successful_live)),
                          live_failure_code=statuses.get(live, {}).get('failure_code', ''),
                          export_status=statuses.get(f'export_{venue}', {}).get('status', 'NOT_REQUESTED'),
                          discovered_n=int(venue_rows.sum()), publisher_supported_n=int(supported.sum()),
                          live_supported_n=int(live_supported.sum()), benchmark_url=reference.get('url', ''),
                          benchmark_n=reference.get('count', ''), benchmark_as_of=reference.get('as_of', ''),
-                         same_scope_count_delta=(int(live_supported.sum()) - int(reference['count'])) if comparable else '',
+                         same_scope_count_delta=(int((venue_rows & membership.map(lambda ids: reference_source in ids)).sum())
+                                                 - int(reference['count'])) if comparable else '',
                          product_status='UNRESOLVED_SCOPE_VERIFICATION'))
     return pd.DataFrame(rows)
 
