@@ -4,21 +4,23 @@ An independent, human-directed project for finding Asian equities worth research
 
 ## Verified Results and Current Limitations
 
-- **Financial-research run:** 5,098 securities analyzed, 4,800 scored, and 589 passed the initial research screen.
-- **Later discovery-only GitHub Actions run:** 13,370 unique securities found. This run measured listing discovery. It did not measure financial-data availability or screening eligibility.
+- **Completed financial-research run (earlier execution):** 5,098 securities analyzed, 4,800 scored, and 589 passed the initial research screen. This is not a financial analysis of the later, larger discovery universe.
+- **November 19, 2026 (KST), GitHub Actions discovery-only run #44370844839:** **16,629 unique security codes discovered** across the five markets. This live run collected listings only: no company fundamentals were fetched, no GARP scores were produced, and no investment performance was evaluated.
 
-| Market | Securities discovered | Evidence from the discovery-only run |
+| Market | Discovered security codes | Live listing evidence in run #44370844839 |
 |---|---:|---|
-| Korea | 2,592 | 2,590 from KRX KIND |
-| Japan | 3,686 | JPX live retrieval |
-| Mainland China | 2,320 | 1,700 SSE Main Board and 619 SSE STAR securities retrieved live |
-| Hong Kong | 2,781 | HKEX live retrieval |
-| Taiwan | 1,991 | TWSE and TPEx live retrieval |
-| **Total** | **13,370** | Unique security codes across the five markets |
+| Korea | 2,592 | KIND: 825 KOSPI and 1,765 KOSDAQ listings; existing curated codes also retained |
+| Japan | 3,686 | JPX listing ingestion |
+| Mainland China | 5,579 | SSE: 1,700 Main Board + 619 STAR; QuantSonar: 1,494 SZSE Main Board + 1,410 ChiNext + 356 BSE |
+| Hong Kong | 2,781 | HKEX workbook ingestion (security codes, not unique issuers) |
+| Taiwan | 1,991 | TWSE: 1,093; TPEx: 898 |
+| **Total** | **16,629** | **No duplicate ticker codes in the combined discovery file** |
 
-Both SSE requests returned one complete page with publisher totals matching the accepted rows. An independent comparison with date- and scope-matched exchange statistics remains open. Security codes can include multiple share classes or trading counters for a single issuer. [China source evidence and remaining gaps](docs/CHINA_A_SHARE_DISCOVERY.md#sse-live-verification-and-remaining-szsebse-gaps)
+The run's `11_discovery_universe.csv` and `12_discovery_sources_log.csv` provide per-code provenance and source outcomes; `49_china_board_coverage.csv` and `52_china_acquisition_acceptance.csv` separate the five mainland boards and live acceptance. The GitHub Actions job, regression tests, discovery-only step, and artifact upload completed successfully. This is a verified **listing-discovery milestone**, not a claim of complete exchange censuses, verified common-equity identity for every record, financial-data coverage, or investment returns.
 
-**Still unresolved:** Live SZSE Main Board, ChiNext, and BSE acquisition. The optional Tushare routes, dated imports, and connection reports support validation, but they have yet to establish live coverage for those boards. Financial-statement reconciliation against primary filings at scale, automated recovery and reassessment of excluded candidates, and point-in-time predictive and out-of-sample return validation also remain open. Gemini v0.5.2 is a separate, unmerged filing-research feature. The active workflow performs no live Gemini analysis. [Gemini development branch](https://github.com/godtang-blip/ai-quant-asia-garp-research/tree/codex/gemini-filing-research-v052)
+**Source and completeness caveats:** SSE Main Board and STAR row counts reconciled with totals in their corresponding live publisher responses, but independently dated, scope-matched exchange-wide benchmarks are still needed. QuantSonar is a **third-party security master**, not official SZSE/BSE exchange verification: it returned 2,904 accepted Shenzhen listings and 356 BSE listings, with its provider-wide totals and effective data date unverified. The official SZSE and BSE routes continued to fail in this run; alternative acquisition succeeded. Other sources, including KRX, also have logged failures despite working alternative routes. Multiple share classes or trading counters can correspond to one company.
+
+**Remaining work:** Confirm listing completeness, security types, and provider dates against independent evidence; test financial-data availability for `.SZ` and `.BJ` instruments; reconcile source-derived financial figures to primary filings at scale; automate correction and reassessment of recoverable exclusions; and establish point-in-time, out-of-sample validation. Gemini filing research remains an **unmerged v0.5.2 feature branch**, not part of the active workflow. [China acquisition documentation](docs/CHINA_A_SHARE_DISCOVERY.md#single-run-acquisition-acceptance) · [Separate Gemini branch](https://github.com/godtang-blip/ai-quant-asia-garp-research/tree/codex/gemini-filing-research-v052)
 
 ## Development Methodology — Human-Directed, AI-Assisted Engineering
 
@@ -29,6 +31,16 @@ Early versions evolved through ChatGPT-assisted experimentation, Python and Goog
 | **Human researcher and project owner** | Defined the five-market GARP objective, research questions, screening rules, and quality requirements. Reviewed actual Actions results, identified shortcomings, and prioritized changes. Retains responsibility for evidence interpretation, investment theses, valuations, and conclusions. |
 | **AI coding assistance** | Helped write and modify the screening and discovery software, debug exchange adapters and API responses, build tests and diagnostics, review code, and organize source-grounded filing tools. Codex tasks were directed by the project owner. |
 | **GitHub Actions** | Executes the defined workflow and produces run artifacts for inspection. Workflow dispatches provide repeatable observations under the runner's actual source-access conditions. |
+
+The Codex-assisted workflow remained human-directed through [PR #3](https://github.com/godtang-blip/ai-quant-asia-garp-research/pull/3), merged into `main` on **November 19, 2026 (KST)**. The documented progression is an early ChatGPT/Colab experimental phase followed by reviewable Codex/GitHub development; it is not a claim that all coding was autonomous or that every change used the same model.
+
+## Versioning and Development Milestones
+
+- **`v0.5.1` remains the current integrated research-engine and GitHub Actions workflow name.** Post-v0.5.1 listing discovery enhancements, including the successful five-market run, were merged through PR #3 without relabeling the engine or workflow.
+- **PR #3 (merged November 19, 2026 KST):** expanded exchange and third-party listing adapters, source/coverage diagnostics, guarded SZSE/BSE acquisition, and reproducible discovery-only checks. The 16,629-code result above is the subsequent live validation milestone.
+- **`v0.5.2` currently refers to the separate, unmerged Gemini primary-filing research branch.** It is not a released or integrated replacement for `v0.5.1`; an eventual version bump should follow integration and end-to-end verification.
+
+Development method (ChatGPT, Codex coding agents, and human review) is **distinct from software version numbering**. Version names identify the pipeline or feature line, not which AI model wrote the code.
 
 ## Research Pipeline and Architecture
 
@@ -63,9 +75,9 @@ python -m src.discovery_smoke --output discovery-smoke
 
 Review `11_discovery_universe.csv` and `12_discovery_sources_log.csv` for listings and source evidence, `38_market_coverage_audit.csv` for research-run coverage, and `47_venue_coverage.csv` for venue scope. The China acquisition report is `52_china_acquisition_acceptance.csv`. For a completed research run, `python -m src.discovery_review outputs review` creates exclusion diagnoses and can compare a completed rerun using `--reassessed-artifacts`.
 
-Optional configuration includes `PUBLIC_DATA_API_KEY` for authorized KRX data, `DART_API_KEY` for OpenDART, and `GARP_LISTING_EXPORT_DIR` for dated exchange files. Tushare requires entitled access or an authorized dated snapshot. The normal workflow requires explicit opt-in for token use. [Export format and coverage checks](docs/FIVE_MARKET_COVERAGE.md) · [Provider and acceptance instructions](docs/CHINA_A_SHARE_DISCOVERY.md#single-run-acquisition-acceptance)
+Optional configuration includes `PUBLIC_DATA_API_KEY` for authorized KRX data, `DART_API_KEY` for OpenDART, `QUANTSONAR_API_KEY` for third-party mainland listing discovery, and `GARP_LISTING_EXPORT_DIR` for dated exchange files. `discovery_only` receives the configured QuantSonar secret; normal financial-research runs require the separate opt-in repository variable `GARP_ENABLE_QUANTSONAR_RESEARCH=1` to pass the same credential. Tushare requires entitled access or an authorized dated snapshot and retains its own explicit normal-run opt-in. Never commit or print credentials. [Export format and coverage checks](docs/FIVE_MARKET_COVERAGE.md) · [Provider and acceptance instructions](docs/CHINA_A_SHARE_DISCOVERY.md#single-run-acquisition-acceptance)
 
-For SZSE and BSE, the listing-only workflow can also validate and stage authorized dated snapshots from a private data repository pinned to a commit. Live retrieval for both exchanges remains unresolved. Optional representative Yahoo Finance diagnostics distinguish listing acquisition from financial-data availability. [Publisher downloads, private bundle and single-run verification](docs/CHINA_A_SHARE_DISCOVERY.md#szse-and-bse-acquisition-handoff)
+For SZSE and BSE, the listing-only workflow can additionally validate authorized dated snapshots from a private repository pinned to a commit. **Live third-party listing discovery from QuantSonar has now succeeded for both exchanges**, while direct official exchange routes remain unresolved. Optional representative Yahoo Finance diagnostics distinguish listing acquisition from financial-data availability. [Publisher downloads and private bundle fallback](docs/CHINA_A_SHARE_DISCOVERY.md#szse-and-bse-acquisition-handoff)
 
 ## Version History — Problems Encountered, Why They Mattered, and What Changed
 
@@ -83,9 +95,11 @@ This project did not begin as a finished investment model with known answers. It
 
 ### Discovery follow-up after PR #1
 
+- **Final post-PR #3 listing milestone (2026-11-19 KST):** a single five-market `discovery_only` Actions run (#44370844839) found 16,629 unique codes. QuantSonar live queries added 2,904 Shenzhen Main Board/ChiNext and 356 BSE listings; SSE, JPX, HKEX, KIND, TWSE and TPEx listing paths also succeeded. China discovery reached 5,579 codes. Provider metadata, independent complete-market reconciliation and downstream financial quality remain separate validation work.
+
 - An early completed financial run analyzed 5,098 securities, including 3,686 in Japan. JPX ingestion expanded Japanese coverage and made the remaining country gaps more visible.
 - A later Actions smoke test discovered 7,593 security codes. HKEX accepted 2,781 codes from a workbook of 17,355 rows. TPEx initially failed schema validation. A subsequent 8,489-code run confirmed live TPEx retrieval after the parser was updated.
-- An Actions run reached 11,052 codes, including 2,590 KIND listings, while mainland exchange routes were still failing. A subsequent listing-only run reported 11,051 codes and exposed SSE pagination validation errors. The 13,370-code result above followed the SSE request and pagination corrections.
+- An Actions run reached 11,052 codes, including 2,590 KIND listings, while mainland exchange routes were still failing. A subsequent listing-only run reported 11,051 codes and exposed SSE pagination validation errors. An intermediate 13,370-code discovery result followed the SSE request and pagination corrections.
 - Separate cloud probes hit access restrictions and did not validate new live China listings. The diagnostics distinguish blocked routes, SDK timeouts, provisional BaoStock inventory and authorized imports. [Discovery and source investigation record](docs/CHINA_A_SHARE_DISCOVERY.md)
 
 See the [changelog](CHANGELOG.md), [v0.5 retrospective audit](docs/V051_RETROSPECTIVE_AUDIT.md), and [archived v0.3.1 documentation](docs/README_v031_legacy.md) for the earlier runs and experiments.
