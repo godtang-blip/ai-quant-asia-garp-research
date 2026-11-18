@@ -1,18 +1,36 @@
-name: Asia GARP Research v0.2.1 — Manual Only
+name: Asia GARP Research v0.3 — Manual Only
 on:
   workflow_dispatch:
     inputs:
       max_symbols:
-        description: 'Balanced market sample: 12 (4 industries), 24 (8), 0 (all 61).'
-        type: string
+        description: 'Max to FETCH (0=all discovered; 90 recommended to begin). Curated 61 first.'
         required: true
-        default: '24'
+        type: string
+        default: '90'
+      discover_mode:
+        description: 'off=curated 61, nikkei=official Nikkei 225, regional=yfinance regions, both=both'
+        required: true
+        type: choice
+        options:
+          - nikkei
+          - regional
+          - both
+          - off
+        default: nikkei
+      fx_mode:
+        description: 'live=dated FX source, off=do not convert without sourced FX'
+        required: true
+        type: choice
+        options:
+          - live
+          - off
+        default: live
 permissions:
   contents: read
 jobs:
   research:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,15 +39,16 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test selection, profitability screens and data-quality triage
+      - name: Execute offline regression tests (no broker, no trades)
         run: python -m pytest -q tests
-      - name: Run research + evidence queue (NO TRADES)
-        run: python -m src.screen --max-symbols "${{ inputs.max_symbols }}" --output outputs --delay-seconds 1.5
-      - name: Upload reproducible results
-        if: success()
+      - name: Run version 0.3 (RESEARCH ONLY)
+        run: |
+          python -m src.v03 --max-symbols "${{ inputs.max_symbols }}" --discover-mode "${{ inputs.discover_mode }}" --fx-mode "${{ inputs.fx_mode }}" --output outputs --delay-seconds 1.0
+      - name: Upload reproducible outputs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: asia-garp-research-v021-${{ github.run_id }}
+          name: asia-garp-research-v03-${{ github.run_id }}
           path: outputs/
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn

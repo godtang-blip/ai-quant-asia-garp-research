@@ -1,117 +1,110 @@
-# Asia GARP Research v0.2.1 — 아시아 성장기업 발굴용 독립 리서치 프로토타입
+# Asia GARP Research v0.3 — independent, reproducible equity research prototype
 
-> **고지**: 개인 연구·취업 포트폴리오용이며 레드포인트파트너스와 무관합니다. 공개된 투자철학에서 연구 아이디어를 얻었지만 회사의 비공개 투자 규칙이나 포트폴리오를 구현하지 않았습니다. **매수 추천, 확정적인 저평가 판정, 실제 주문, 계좌 연동은 없습니다.**
+> **Research only. No actual trading, brokerage orders, portfolio returns, verified undervaluation, or proprietary methods of Redpoint Partners.**
+>
+> The investment questions, quality constraints, and product concept were driven by the researcher; code implementation was **AI-assisted**. The purpose is *auditable idea generation*, not to claim autonomous investment expertise or replicability of a specific firm's private process.
 
+## Why this exists
 
-## v0.2.1 업데이트 (지원서용 데이터 품질 개선)
+Developed from a personal-investment experiment into an Asia-equity idea-discovery pipeline. A series of actual prototype problems prompted revisions:
 
-- 기존 9개 산업 / 61개 수동 유니버스 유지. 기존 운용 v4.2 / v5.12 저장소 및 모의계좌에는 영향 없음.
-- **홍콩 등 표시 통화 불일치**: 환율을 임의 추정하지 않으며 FCF yield만 결측 처리합니다. 다른 지표의 비교 가능성이 충분한 경우 탐색 후보로 남길 수 있습니다. `data_limitations`에 명시합니다.
-- **매출·이익 성장률 기준 기간 미확인**: `revenue_growth_period`, `earnings_growth_period`와 `data_limitations`에 명시합니다. Yahoo 값이 공시의 YoY 성장률과 같다고 주장하지 않습니다.
-- **수익성 검증**: 영업이익률이나 ROE가 0 이하이거나 이익 성장률이 -30%보다 낮은 기업은 자동 상위 후보에서 보류합니다. 이는 독자적 연구 가설이며 적자 전환주를 영구 제외하는 투자규칙이 아닙니다.
-- **주식분할**: Yahoo가 최근 180일 이내 분할일을 제공한다면 검토 대상으로 표시합니다. 제공 정보가 없으면 `미확인`이지 `분할 없음`이 아닙니다. 기존 의심 종목 3곳은 원문 검증 전까지 별도 보류합니다.
-- **재현 가능성**: `09_filing_verification_queue.csv` 및 `10_portfolio_methodology_NOTE.md` 추가. 입력 데이터 출처, 가정, 미확인 항목을 분리합니다.
-- **검증 범위**: 단위테스트 17건과 이전 61개 결과의 스냅샷 재실행을 확인했습니다. **새 버전의 실시간 Yahoo 조회와 기업 공시 교차검증은 아직 진행하지 않았습니다.**
+- v0.1: manually chosen narrow semiconductor universe; vendor accounting/valuation discrepancies observed
+- v0.2: expanded to 61 curated companies across 9 peer groups; still peer-ranking and sector cap issues
+- v0.2.1: avoided treating HKD/CNY mismatches as universally invalid; quarantined known anomalies
+- **v0.3: dynamic listing discovery, explicit FX audit trail, issuer accounting-basis evidence ledger, and cross-industry screening scores with declared sector adjustments**
 
-> `shortlist_eligible=True`는 정량 탐색 대상으로 남았다는 뜻입니다. 1차 감사에 걸리지 않았다는 이유만으로 재무 데이터가 정확하거나 종목이 저평가됐다고 결론내리지 마세요.
+**Portfolio value:** demonstrates a problem -> hypothesis -> implementation -> anomaly -> QA -> updated research question cycle. The output is a shortlist of *questions*, not proof of skill in predicting prices.
 
-### 인턴 지원 포트폴리오 구성
+## Quick start: GitHub Actions
 
-- **이력서 PDF**: 분석 목적과 본인 역할을 간결하게 기재
-- **기업 투자 메모 1~2쪽**: 기업의 성장 동인, 가격과 가치의 괴리, 선택한 가치평가 방법, 재평가 촉매 및 반대 논거 중심
-- **저장소 README**: 사용법, 구조, 실행 가능한 예제, 데이터 품질과 한계, AI 개발 지원 사실을 투명하게 설명
-- **GitHub Actions**: 자동 생성 결과의 재현성 증거로 제시하되, 실행 성공을 분석 정확성 인증이라고 주장하지 않기
+1. Upload the **contents** of this project folder (include hidden `.github/`) to the existing `ai-quant-asia-garp-research` repository. Do NOT overwrite the separately running `ai-quant-v512-paper` repo.
+2. Under **Actions → Asia GARP Research v0.3 — Manual Only → Run workflow**, use:
+   - `max_symbols = 90` to begin (the 61 curated names first, then up to 29 discovered)
+   - `discover_mode = nikkei` (official Nikkei 225 constituent source; fallback is **not** invented if source unavailable)
+   - `fx_mode = live` for dated Yahoo FX quotes, with visible warnings on failure
+3. Open the completed run and download the **Artifact** `asia-garp-research-v03-<run_id>`.
+4. Inspect `03_research_report.md`, `15_cross_industry_scores.csv`, `09_filing_verification_queue.csv`, `13_fx_normalization_audit.csv`, and `12_discovery_sources_log.csv`.
 
-자세한 예시는 [`PORTFOLIO_README_GUIDE.md`](PORTFOLIO_README_GUIDE.md)를 참고하세요.
+Other choices: `max_symbols=0` tries the **whole available watchlist**, potentially 200+ API calls and rate limits. A successful workflow does not imply all symbols had data. `discover_mode=both` adds optional Yahoo regional screening; source failures show in `12_discovery_sources_log.csv`. `off` uses only 61 curated names.
 
-## v0.1 → v0.2: 기존 변경 사항
-
-| 항목 | v0.1 | v0.2 |
-|---|---|---|
-| 예시 유니버스 | 아시아 28개 (반도체 비중 높음) | **9개 산업 비교군, 수동 지정 61개** |
-| `max_symbols=12` | CSV 첫 12개 = 반도체 집중 | **4개 산업 × 3개**, 균형 선택 |
-| `max_symbols=24` | CSV 첫 24개 | **8개 산업 × 3개**, 균형 선택 |
-| 데이터 이상치 | 단순 범위 제한 | **극단 PER·PSR·성장률·동일 제공사 EPS 불일치에 검토 플래그** |
-| 후보 순위 | 동종그룹 점수 | **동종그룹 점수 + 그룹별 최대 2개 추천 순서** |
-| 누락 지표 | 무게에 따라 점수가 낮아질 수 있음 | **사용 가능 가중치로 정규화 + 커버리지 별도 공개** |
-| 보고 | 후보 CSV, Markdown | **품질 검토표·산업별 커버리지·균형 선택 내역·투자메모 양식 추가** |
-| 재현 | 당일 라이브 조회만 | **`--snapshot-csv`로 과거 출력 파일을 오프라인 재계산** |
-
-**주의**: 정량 점수는 동종기업 *상대 순위*일 뿐 회사의 본질가치·미래 성과 예측이나 투자 가능성 점수가 아닙니다. 일부 정량 지표의 산식·기간은 데이터 제공사에 의존합니다. 내재가치 산출, 촉매의 실제 확인, 시장의 오해 분석, 공시 출처 대조는 사람이 해야 합니다.
-
-## 가장 쉬운 업데이트 — 기존 GitHub 저장소 유지
-
-1. **기존 `ai-quant-asia-garp-research` 저장소 그대로 사용**하세요. 새 저장소를 추가하지 않습니다.
-2. 압축을 풀어 나온 **`ai-quant-asia-garp-research` 폴더 안의 파일 전체**를 기존 저장소 루트에 덮어씌워 Push합니다. `.github/workflows/run-research.yml` 등 **숨김 폴더 포함**입니다. 기존 `v4.2`, `v5.12`, 통합 모의운용 분석 저장소에는 아무것도 적용하지 마세요.
-3. Actions → **Asia GARP Research v0.2.1 — Manual Only** → Run workflow.
-4. 첫 시도에는 `max_symbols=12`를 추천합니다(4개 산업, 데이터 공급 제한 확인). 성공하면 `24`(8개 산업)를 실행하고, 이후 필요하면 `0`(61개 전체)을 사용합니다. **0 전체 조회는 API 호출 제한과 실행 시간 증가 위험**이 있습니다.
-5. 실행 화면 하단 **Artifacts**에서 `asia-garp-research-v021-[실행번호]` ZIP 다운로드.
-6. `03_research_report.md`와 `05_data_quality_review.csv`를 먼저 검토하세요. 후보를 확정하기 전 반드시 공시 자료와 대조합니다.
-
-### 실행 결과물 10개
-
-| 파일 | 기능 |
-|---|---|
-| `01_all_research_candidates.csv` | 전체 원본 지표·산업·점수·플래그·데이터 커버리지 |
-| `02_research_shortlist.csv` | **산업별 균형 후보**(이상치 플래그 없는 경우만; 여전히 미검증) |
-| `03_research_report.md` | 사람이 읽기 쉬운 연구용 보고서 |
-| `04_run_metadata.json` | 수집 모드, 섹터 수, 오류·의심 자료 개수 |
-| `05_data_quality_review.csv` | 이상치/누락/동종 표본 부족 → 공시 대조 우선 목록 |
-| `06_peer_coverage.csv` | 산업 비교군별 표본·지표 유효성 |
-| `07_investment_memo_TEMPLATE.md` | 투자 논거·반대 논거·재평가 촉매·가치평가 양식 |
-| `08_balanced_selection.csv` | 이번 실행에 실제 선택된 기업 명단(재현성) |
-| `09_filing_verification_queue.csv` | 원문 검증 필요 사유 및 지표별 기간·통화 등 상태 |
-| `10_portfolio_methodology_NOTE.md` | 지원 포트폴리오용 방법론 및 한계 요약 |
-
-## Google Colab에서 실행
-
-- `notebooks/Run_Asia_GARP_Colab.ipynb` 업로드 → 모든 셀 실행.
-- 저장소의 v0.2 ZIP을 요청하는 셀에서 업로드 → CSV 결과 자동 ZIP 다운로드.
-- **Colab은 별도 연구 환경이고 GitHub 자동운용 계좌와는 연결되지 않습니다.**
-
-## 로컬 테스트/실행
+### CLI
 
 ```bash
 pip install -r requirements.txt
 python -m pytest -q tests
-python -m src.screen --max-symbols 12 --output outputs
-python -m src.screen --max-symbols 24 --output outputs
+python -m src.v03 --max-symbols 90 --discover-mode nikkei --fx-mode live --output outputs
+# offline replay, NO new exchange rates (avoid historical look-ahead)
+python -m src.v03 --max-symbols 0 --discover-mode off --fx-mode off --snapshot-csv vendor_snapshot.csv --output replay_outputs
 ```
 
-이전 v0.1의 `01_all_research_candidates.csv`를 이용한 **과거 시점 자료 재평가**(새 기업의 값은 결측으로 표시):
+Private Colab option: `notebooks/Run_Asia_GARP_Colab.ipynb` accepts this ZIP. No GitHub token needed for local ZIP upload.
 
-```bash
-python -m src.screen --max-symbols 0 --snapshot-csv old_results/01_all_research_candidates.csv --output replay_outputs
-```
+## What v0.3 actually implements
 
-`--snapshot-csv`는 라이브 데이터 재조회가 아니며, 이를 최신 투자 판단으로 오인해서는 안 됩니다.
+### 1) Extensible universe with source provenance
 
-## v0.1 의심 값 추적
+`data/universe.csv` has 61 *curated* names. `src/discovery.py` attempts an official **Nikkei 225** constituent table, and optionally a Yahoo regional equity screener (Japan, Korea, Taiwan, Hong Kong). Valid new symbols are deduplicated and logged.
 
-`data/prior_discrepancies_to_review.csv`에는 이전 실행에서 원문 재확인이 필요한 것으로 기록된 **8035.T, 6857.T, 005930.KS**가 있습니다. 이들 종목은 후속 조회에서 수치가 바뀌어도 검증을 완료하기 전까지 자동 후보 추천에서 제외됩니다. 원문 확인 후 근거를 별도 보존하고 `status`를 `RESOLVED`로 바꿀 수 있습니다. **이들은 실제 데이터 오류라고 확정된 종목이 아닙니다.**
+**Important:** An index member list is not all Asian equities; it is *index-constrained* discovery. New issuers require analyst review of ticker identity, listing class and industry classification. Region screeners can be unavailable or incomplete; no synthetic fallback. New names are visible in `11_discovery_universe.csv`, but **automatically discovered names do not automatically qualify for a final investment idea**.
 
-## 주요 보수적 검증 규칙
+### 2) Currency conversion and FX audit
 
-- Forward PE가 **5배 미만 또는 100배 초과**, P/S가 **30배 초과**, 매출증가율이 **+100% 초과 또는 -60% 미만**, 이익증가율이 **+200% 초과 또는 -80% 미만**이면 수치 검토 목록으로 보냅니다. **실제 성장은 이 범위를 벗어날 수 있고, 이상치가 곧 오류라는 뜻은 아닙니다.**
-- 동일 제공사 주가/Forward EPS로 역산한 PER과 제공 Forward PER이 **20% 넘게 차이**나면 검토 플래그. **이 체크가 통과했다고 외부 공시까지 검증된 것은 아닙니다.**
-- 매출/이익 성장의 비교 기준이 다른 회사들 사이에 동일하다고 가정하지 않습니다. 공시 발표 시점, 회계기간, 일회성 이익, 주식분할 및 환율을 사람이 대조해야 합니다.
-- 금액 지표의 표시 통화와 재무 보고 통화가 다르면 FCF yield는 임의 환율로 계산하지 않고 결측 처리합니다.
-- 동종기업별 최소 3개 유효한 수치가 없으면 그 항목의 상대 순위는 계산하지 않습니다. 전체 점수도 최소 5개 지표, 65% 이상 가중치 커버리지가 필요합니다.
-- 플래그 종목은 `01`과 `05`에 남지만 `02` 추천 후보에서는 제외합니다. 검증 후 사람이 따로 평가할 수 있습니다.
+For Yahoo finance `info` fields:
+- `currency` = price / market cap quote currency, `financialCurrency` = financial reporting currency.
+- Rates from yfinance currency quotes, with source ticker, last rate date, 1-year historical average, and cache for each run.
+- Market cap and price converted to **USD at dated spot**. Vendor annual free cash flow converted to **USD at 1-year mean FX as an approximation**, and `FCF / cap` re-derived with source/currency/assumption fields.
+- If reporting and quote currencies are the same, FCF / cap can also be compared locally without USD FX, though the vendor period remains unverified.
+- **No FX available, no cross-currency FCF yield. No guessed rates.** An EPS field of unknown currency is never mechanically divided into an HKD price. We do **not** claim to have restated local financial statements into USD or IFRS.
+- The period of `freeCashflow` is vendor-defined: **1-year mean FX is a screening proxy, NOT audited IAS 21 translation**. Check actual fiscal cash flows and reporting dates in filings before valuing a business.
 
-## 레드포인트파트너스 지원 활용 (독립 프로젝트)
+### 3) Accounting/comparability provenance (NOT automatic GAAP→IFRS restatement)
 
-**목표**: 아시아 산업 변화 → 수동 지정 기업군 탐색 → 재무값 오류 분리 → 산업별 후보 → 1개 기업 원문 기반 분석 → 비판 가능한 리서치 메모.
+Korea, Japan, China, Taiwan, Hong Kong have different issuer-level allowed/reporting standards. It is wrong to assign J-GAAP to every Japanese issuer or IFRS to every Hong Kong issuer. The system retains a **jurisdiction hint**, but `reported_accounting_standard=UNKNOWN_PRIMARY_FILING_REQUIRED` unless an analyst supplies an explicit review entry:
 
-- 보고서의 **투자 논거·반대 논거, 가치평가 방식 선택(DCF·PSR 등), 촉매와 무효화 조건**을 직접 설명할 수 있어야 합니다.
-- 현재 버전은 산업 구조·촉매를 자동으로 발견하거나 가치 범위를 추정하지 않습니다. 기업분석은 검증이 필수입니다.
-- AI를 사용해 코드 초안을 생성했다면 그 도움을 정직하게 밝히고, 본인이 설계한 투자 기준과 검증 방법을 구분해 설명합니다.
-- 기업분석 보고서 1건의 제출 완성도가 최우선이며, 시스템의 기능 추가는 지원 일정을 늦추지 않는 범위에서 합니다.
+`data/accounting_issuer_evidence.csv`: `ticker,reported_standard,source_url,filing_date,verified_by`
 
-### 원문 근거
+A complete row marks **the standard identified**, not that its actual financial statement line items have been harmonized to IFRS. Vendor earnings growth, operating margin and other ratios are still tagged **unverified**. Do not use them as audited apples-to-apples comparisons until reconciled to issuer filings (e.g., differing definitions of operating profit, intangible assets, leases, financial company accounts).
 
-- 더벨, 2026년 7월 정종환 대표 관련 보도 (아시아 산업·공급망, 시장 가격과 기업가치의 간극, 촉매 검증). 이는 **공개 철학에 대한 참고**이지 내부 투자 방식 복제가 아닙니다.
-- 금융투자협회, 2026년 11월 16일 AI-Native Equity Research Intern 공고.
-- 사용자가 제공한 이전 전환형 인턴 채용공고 (과거 2/27 마감): 문서화·재현성·협업에 대한 **과거 공개 채용 방향**으로 참고. **현재 접수조건과 혼동하지 마세요.**
+### 4) 0–100 cross-industry RESEARCH priority scores
 
-**본 저장소에는 GitHub Actions API 비밀키, 개인 거래 계좌, 모의매매 state, 브로커 주문 로직이 없습니다.**
+`src/scoring_v03.py` explicitly declares absolute **fixed reference anchors**, sector-specific P/E and P/S anchors, and sector category weights. Five pillars (growth, profitability, valuation, cashflow/leverage, price momentum) produce a score on a **common numeric range**. Missing metrics reduce coverage/score; unclassified issuers and quality flags require human review. The top ten are ranked **without the old forced sector caps**.
+
+> A common *numeric* scale does not establish true *economic* comparability or expected returns. These anchors and weights were not fitted or validated against forward outcomes. A 90-score company is NOT proven to beat an 80-score company. Sectors such as banks, REITs, insurers, pre-profit biotech need separate financial models, rather than forcing industrial-company valuation logic onto them.
+
+Screens never silently pass extreme revenue growth, losses, major EPS inconsistencies, recent stock splits, or unresolved prior anomalies. `data/prior_discrepancies_to_review.csv` holds open source/period issues. Until filed source confirms, `filing_verification=NOT_PERFORMED`.
+
+### 5) Analyst research decision loop
+
+The automatic research shortlist is **only the first gate**:
+1. Review source documents/period/currencies, including splits and diluted share count.
+2. Explain the source of structural growth and compare business economics with competitors.
+3. Decide whether DCF, peer P/E, EV/EBITDA, P/S, or multiple methods fit the business and explicitly acknowledge their limitations.
+4. Estimate market-implied expectations and identify a **dated, evidenced** catalyst (not invented by LLM).
+5. Write strongest bear case, sensitivity, invalidation, and a final human conclusion.
+
+Use `07_investment_memo_TEMPLATE.md` and `16_analyst_research_queue.md` to work through these questions. Do not publicly claim forecasts were derived from the score alone.
+
+## Main output files
+
+| Output | Meaning |
+|---|---|
+| `01_all_research_candidates.csv` | all fetched records with raw vendor fields and QA |
+| `02_research_shortlist.csv` | eligible unverified curated candidates, sorted by research score |
+| `03_research_report.md` | reader-friendly reproducible results and limitations |
+| `04_run_metadata.json` | timestamp, source status, count, calibration and verification caveats |
+| `05_data_quality_review.csv` | unresolved issues and excluded candidates |
+| `09_filing_verification_queue.csv` | primary filings and manual analyst sign-off queue |
+| `11_discovery_universe.csv` | curated + newly found candidates with source |
+| `12_discovery_sources_log.csv` | successful, failed and unavailable discovery sources |
+| `13_fx_normalization_audit.csv` | quote and financial currencies, USD values, FX sources |
+| `14_accounting_comparability_audit.csv` | issuer reporting standards, sources, period limitations |
+| `15_cross_industry_scores.csv` | five component scores, weights, coverage and exclusion flags |
+| `17_fx_quotes_log.csv` | FX pair provenance and failures |
+
+### Operational and ethical limitations
+
+- This is a one-off **current vendor snapshot**, not historical point-in-time fundamental research or a robust walk-forward backtest.
+- yfinance fields are vendor estimates, not confirmed source filings, and can change or be wrong; some tickers may fail due to rate limits.
+- Public repository publishing: do not commit personal API credentials, account state, proprietary research or provider-licensed datasets that cannot be redistributed. README and code can be public without mirroring underlying premium datasets.
+- GitHub Actions success = runnable code, not verified financial accuracy or meaningful alpha.
+- No claim of replicating Redpoint Partners' internal security selection or trading rules. Publicly discussed GARP-style questions informed a **separately designed, independent research system**.

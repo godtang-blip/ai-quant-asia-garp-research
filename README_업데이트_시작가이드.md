@@ -1,10 +1,18 @@
-# Asia GARP Research v0.2.1 업데이트 안내
+# v0.3 적용 방법 (기존 저장소 업데이트)
 
-1. 기존 **ai-quant-asia-garp-research** 저장소만 업데이트합니다. v4.2/v5.12/성과비교 프로젝트는 건드리지 않습니다.
-2. ZIP 압축을 풀고 `ai-quant-asia-garp-research/` 폴더 **안쪽 내용 전체를** 기존 프로젝트 루트에 덮어써 Push 합니다. `.github`도 포함합니다.
-3. Actions → **Asia GARP Research v0.2.1 — Manual Only** → Run workflow. `max_symbols=12`로 성공 확인 후 필요하면 `0`(61개 전체).
-4. 완료된 Actions 실행 하단 **Artifacts → asia-garp-research-v021-...** ZIP 다운로드.
-5. `03_research_report.md`와 `09_filing_verification_queue.csv`를 먼저 읽고, 실제 공시 확인이 없는 후보는 투자 추천이라고 표현하지 않습니다.
-6. 공개 포트폴리오는 `PORTFOLIO_README_GUIDE.md`를 참조합니다. 채용용은 기업 투자메모가 중심이며 자동화의 설명은 짧게 첨부합니다.
+1. 이 ZIP을 압축 해제합니다.
+2. **안쪽 `ai-quant-asia-garp-research` 폴더의 내용물**을 기존 동명 GitHub 저장소에 복사합니다. `.github/workflows/run-research.yml` 포함. 새 저장소를 만들지 않습니다.
+3. Commit 및 Push. 기존 개인 실전/모의 운용 저장소 `ai-quant-v512-paper`에는 복사하지 않습니다.
+4. GitHub → Actions → **Asia GARP Research v0.3 — Manual Only** → Run workflow.
+5. 권장 최초 설정: `max_symbols=90`, `discover_mode=nikkei`, `fx_mode=live`.
+6. 실행 화면의 Artifacts ZIP 내려받아 `03_research_report.md`, `12_discovery_sources_log.csv`, `13_fx_normalization_audit.csv`, `15_cross_industry_scores.csv`를 확인합니다.
 
-**중요:** 이번 버전은 데이터 품질 *플래그·표시·보류*를 보강했습니다. 실시간 데이터 공시 검증이나 포워드 PER 정확성 보장은 아닙니다. 테스트는 오프라인 단위테스트 17건 및 과거 스냅샷 재계산입니다.
+**처음부터 모든 기업 분석은 비권장**: `max_symbols=0`은 출처에서 발견한 종목까지 전부 조회해 API 제한에 걸릴 수 있습니다. `90`에서 성공 후 증가시키세요.
+
+새 종목이 0개인 경우 `12_discovery_sources_log.csv`에서 수집 실패 여부를 확인하세요. 초록색 체크만으로 자동 종목 발굴이 성공했다는 뜻은 아닙니다.
+
+일부 수치가 `NaN`이면 환율이나 원자료가 확인되지 않아 보류한 것일 수 있습니다. 임의로 채우지 마세요.
+
+통합 점수는 **정량 심층분석 우선순위**이지, 실제 저평가/초과수익을 검증한 점수가 아닙니다. 공개 전 투자 메모 1건의 공시 원문·재무 기간·환율·기업별 회계기준을 직접 확인하세요.
+
+변경 내역과 실험 한계는 `README.md`, `CHANGELOG.md`, `PORTFOLIO_README_GUIDE.md`를 참고하세요.
