@@ -34,13 +34,13 @@ def a_dcf(ticker='000990.KS'):
 def save_rows(path,rows,cols):
     pd.DataFrame(rows,columns=cols).to_csv(path,index=False,encoding='utf-8')
 
-def test_official_jpx_filters_products_and_unsupported_alphanumeric():
+def test_official_jpx_filters_products_and_accepts_supported_alphanumeric():
     f=pd.DataFrame({'Code':['7203','123A','1321','8306'],
       'Company Name':['Toyota','A issue','ETF fund','Bank'],
       'Market/Products':['Prime Market (Domestic Stocks)','Growth Market (Domestic Stocks)',
                          'ETF','Standard Market (Domestic Stocks)']})
     found=parse_jpx_table(f)
-    assert [x['ticker'] for x in found]==['7203.T','8306.T']
+    assert [x['ticker'] for x in found]==['7203.T','123A.T','8306.T']
     assert all(x['discovery_source'].startswith('https://www.jpx.co.jp/') for x in found)
 
 

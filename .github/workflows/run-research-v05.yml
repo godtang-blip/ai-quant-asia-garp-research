@@ -8,7 +8,7 @@ on:
         default: '150'
         type: string
       discover_mode:
-        description: 'Supplemental official JPX/TWSE plus regional vendor search of 5 markets'
+        description: 'Exchange sources and optional publisher exports, plus regional vendor samples'
         required: true
         default: all5_official
         type: choice
@@ -54,6 +54,7 @@ jobs:
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
+          GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
         run: |
           python -m src.v051 \
             --max-symbols "${{ inputs.max_symbols }}" \

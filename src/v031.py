@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from .discovery_v031 import discover_five_markets, select_market_balanced
+from .discovery_v031 import discover_five_markets, select_market_balanced, select_market_proportional
 from .accounting import issuer_evidence, accounting_basis
 from .fx import YahooFX, normalized_values
 from .ranking import valid_number
@@ -185,6 +185,12 @@ def research_note(ranked:pd.DataFrame, meta:dict)->str:
     return '\n'.join(lines)+'\n'
 
 
+class FundamentalsUnavailable(RuntimeError):
+    def __init__(self, attempts: pd.DataFrame):
+        super().__init__('All fundamental data missing — no false success')
+        self.attempts = attempts
+
+
 def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str='all5',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None, per_region:int=50,
         evidence_mode:str='full', evidence_limit:int=8)->dict:
@@ -194,8 +200,13 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     if evidence_limit < 0 or evidence_limit > 30:raise ValueError('evidence_limit must be 0..30')
     base=_read_curated(universe_file)
     combined, discovery_log=discover_five_markets(base,discover_mode,per_region)
-    # Keep baseline observations intact. Additional discoveries follow in published source order.
-    selected=select_market_balanced(combined,max_symbols)
+    selector = select_market_proportional if discover_mode == 'all5_official' else select_market_balanced
+    selected = selector(combined, max_symbols)
+    outputs.mkdir(parents=True, exist_ok=True)
+    for table, name in ((combined, '11_discovery_universe.csv'),
+                        (discovery_log, '12_discovery_sources_log.csv'),
+                        (selected, '08_selected_universe.csv')):
+        table.to_csv(outputs/name, index=False, encoding='utf-8-sig')
     prior=_prior_open(universe_file)
     gaap_evidence=issuer_evidence(universe_file.parent/'accounting_issuer_evidence.csv')
     now=dt.datetime.now(dt.timezone.utc).isoformat()
@@ -275,7 +286,7 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     if not rows:raise RuntimeError('No companies to analyze')
     d=pd.DataFrame(rows)
     if not d['fetch_error'].fillna('').eq('').any():
-        raise RuntimeError('All fundamental data missing — no false success')
+        raise FundamentalsUnavailable(d)
     ranked=compute_scores(d)
     # Two gates: provisional investigation vs *human-verified* investment memo.
     # New issuer discovery is NOT an automatic exclusion from research; it is
@@ -341,7 +352,6 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     peers=ranked.groupby('peer_group',dropna=False).agg(analyzed=('ticker','size'),final_eligible=('v031_research_eligible','sum'),avg_score_coverage=('score_coverage','mean')).reset_index()
     save(peers,'06_peer_coverage.csv')
     (outputs/'07_investment_memo_TEMPLATE.md').write_text(memo_template(),encoding='utf-8')
-    save(selected,'08_selected_universe.csv')
     queue_fields=['ticker','company','market','peer_group','is_new_discovery','cross_industry_score_100',
                   'v031_research_status','v03_review_flags','data_quality_flags','data_limitations',
                   'reported_accounting_standard','revenue_growth_period','earnings_growth_period',
@@ -350,8 +360,6 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     save(ranked[[x for x in queue_fields if x in ranked.columns]],'09_filing_verification_queue.csv')
     (outputs/'10_portfolio_methodology_NOTE.md').write_text(
         'v0.3.1: fixed-reference cross-industry investigation scores, sector-aware valuation bands, disclosed coverage, FX and accounting audit queues. No verified undervaluation or actual holdings. AI-assisted implementation; user-led requirements. See README.\n',encoding='utf-8')
-    save(combined,'11_discovery_universe.csv')
-    save(discovery_log,'12_discovery_sources_log.csv')
     save(ranked[[x for x in ('ticker','currency','financial_currency','quote_to_usd','financial_to_usd_avg',
         'fx_price_asof','fx_source_quote','fx_source_financial','market_cap','market_cap_usd','free_cashflow_raw',
         'fcf_usd_proxy','fcf_yield','fx_status','valuation_quote_status','vendor_forward_pe_raw','vendor_price_to_sales_raw','price_to_sales') if x in ranked.columns]], '13_fx_normalization_audit.csv')

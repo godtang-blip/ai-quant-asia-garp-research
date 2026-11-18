@@ -12,6 +12,7 @@ import unicodedata
 
 import pandas as pd
 from .discovery_v031 import REGIONS
+from .listing_exports import VENUES
 from .evidence import read_manual_decisions, render_evidence_book
 
 SOURCE_KEYS={
@@ -68,68 +69,103 @@ def headline_entity_audit(ticker:str,company:str,title:str,aliases:list[str]|Non
     return 'QUARANTINE_NAME_UNCONFIRMED','No strong issuer identity in title; analyst review required'
 
 
-def coverage_audit(outputs:Path,mode:str)->tuple[pd.DataFrame,dict]:
-    universe=_read(outputs,'11_discovery_universe.csv')
-    selected=_read(outputs,'08_selected_universe.csv')
-    ranked=_read(outputs,'01_all_research_candidates.csv')
-    logs=_read(outputs,'12_discovery_sources_log.csv')
-    logmap={str(r.source):r.to_dict() for _,r in logs.iterrows()}
-    total=len(ranked)
-    universe_total=len(universe)
-    rows=[]
-    for market in REGIONS:
-        key=SOURCE_KEYS[market]
-        subset=ranked[ranked.market.eq(market)]
-        subset_selected=selected[selected.market.eq(market)]
-        ext=universe[universe.market.eq(market)]
-        source=logmap.get(key,{})
-        status=str(source.get('status','NOT_CONNECTED' if key=='NO_OFFICIAL_ADAPTER' else 'NOT_REQUESTED'))
-        if mode=='off':
-            coverage='SNAPSHOT_NO_LIVE_DISCOVERY'
-        elif key=='NO_OFFICIAL_ADAPTER':
-            coverage='VENDOR_ONLY_OFFICIAL_NOT_CONNECTED'
-        elif status=='OK':
-            coverage='OFFICIAL_SUPPLEMENTAL_RETRIEVED_NOT_CENSUS'
-        elif status=='NOT_CONFIGURED_AUTH_REQUIRED':
-            coverage='OFFICIAL_ACCESS_MISSING'
+# Published v0.5 archive counts. The archive did not report fetch success by market.
+ARCHIVE_COUNTS = {
+    'Korea': (99, 8), 'Japan': (310, 54), 'China': (91, 11),
+    'Hong Kong': (101, 13), 'Taiwan': (1121, 154),
+}
+FINANCIAL_FIELDS = ('revenue_growth', 'earnings_growth', 'operating_margin',
+                    'roe', 'revenue_total_raw', 'free_cashflow_raw')
+
+
+def coverage_audit(outputs: Path, mode: str, failed_fetches: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict]:
+    universe = _read(outputs, '11_discovery_universe.csv')
+    selected = _read(outputs, '08_selected_universe.csv')
+    ranked = _read(outputs, '01_all_research_candidates.csv') if failed_fetches is None else failed_fetches
+    logs = _read(outputs, '12_discovery_sources_log.csv')
+    logmap = {str(r.source): r.to_dict() for _, r in logs.iterrows()}
+    total = len(ranked)
+    rows = []
+    official_missing = []
+    for market, key in SOURCE_KEYS.items():
+        subset = ranked[ranked.market.eq(market)]
+        ext = universe[universe.market.eq(market)]
+        source = logmap.get(key, {})
+        status = source.get('status', 'NOT_REQUESTED')
+        official_ids = {key} if status == 'OK' else set()
+        export_ids = {f'export_{venue}' for venue, (region, *_) in VENUES.items()
+                      if region == market and logmap.get(f'export_{venue}', {}).get('status') == 'OK'}
+        if status != 'OK':
+            official_missing.append(market)
+        if mode == 'off':
+            coverage = 'SNAPSHOT_NO_LIVE_DISCOVERY'
+        elif official_ids:
+            coverage = 'OFFICIAL_SUPPLEMENTAL_RETRIEVED_NOT_CENSUS'
+        elif export_ids:
+            coverage = 'PUBLISHER_EXPORT_IMPORTED_NOT_INDEPENDENTLY_VERIFIED'
+        elif status == 'NOT_CONFIGURED_AUTH_REQUIRED':
+            coverage = 'OFFICIAL_ACCESS_MISSING'
+        elif key == 'NO_OFFICIAL_ADAPTER':
+            coverage = 'VENDOR_ONLY_OFFICIAL_NOT_CONNECTED'
         else:
-            coverage='OFFICIAL_RETRIEVAL_FAILED_OR_UNAVAILABLE'
-        finite=pd.to_numeric(subset.get('cross_industry_score_100',pd.Series(dtype=float)),errors='coerce')
-        row={
-            'market':market,'official_source':key,
-            'official_source_status':status,
-            'official_rows_received':int(source.get('accepted_pattern',0) or 0) if source else 0,
-            'discovered_universe_n':len(ext),
-            'discovered_universe_share_pct':round(100*len(ext)/universe_total,2) if universe_total else 0.0,
-            'selected_for_vendor_fetch_n':len(subset_selected),
-            'analyzed_n':len(subset),
-            'analysis_share_pct':round(100*len(subset)/total,2) if total else 0.0,
-            'successful_vendor_fetch_n':int(subset.fetch_error.eq('').sum()) if 'fetch_error' in subset else 0,
-            'scored_n':int(finite.notna().sum()),
-            'industry_unclassified_n':int(subset.peer_group.eq('unclassified').sum()),
-            'industry_unclassified_pct':round(100*subset.peer_group.eq('unclassified').sum()/len(subset),2) if len(subset) else 0,
-            'screening_eligible_n':int(subset.v031_research_eligible.map(_yes).sum()) if 'v031_research_eligible' in subset else 0,
-            'screening_eligible_rate_pct':round(100*subset.v031_research_eligible.map(_yes).sum()/len(subset),2) if len(subset) else 0,
-            'coverage_status':coverage,
-            'coverage_claim':'PARTIAL_UNIVERSE_NOT_COMPARABLE_CENSUS',
-        }
-        rows.append(row)
-    frame=pd.DataFrame(rows)
-    shares=frame.discovered_universe_share_pct
-    dominant=frame.loc[shares.idxmax(),'market'] if len(shares) else ''
-    official_missing=frame[~frame.coverage_status.eq('OFFICIAL_SUPPLEMENTAL_RETRIEVED_NOT_CENSUS')].market.tolist()
-    incomplete=mode!='off' and bool(official_missing)
-    status='SNAPSHOT_COVERAGE_NOT_AUDITED' if mode=='off' else ('PARTIAL_COVERAGE' if incomplete else 'SUPPLEMENTAL_ONLY')
-    metrics={'market_coverage_status':status,
-        'markets_without_retrieved_official_issuer_list':official_missing,
-        'dominant_market':dominant,
-        'dominant_market_share_pct':float(shares.max()) if len(shares) else 0,
-        'dominant_market_selected_share_pct':float(frame.loc[frame.market.eq(dominant),'analysis_share_pct'].iloc[0]) if dominant else 0,
-        'market_concentration_warning':bool(len(shares) and shares.max()>50),
-        'full_five_market_census_verified':False,
-        'complete_market_comparable_rankings_allowed':False}
-    frame.to_csv(outputs/'38_market_coverage_audit.csv',index=False,encoding='utf-8-sig')
-    return frame,metrics
+            coverage = 'OFFICIAL_RETRIEVAL_FAILED_OR_UNAVAILABLE'
+
+        if 'listing_source_ids' in ext:
+            source_ids = ext.listing_source_ids.map(json.loads)
+            listing_backed = int(source_ids.map(lambda ids: bool(official_ids.union(export_ids).intersection(ids))).sum())
+        else:
+            listing_backed = None  # Archived artifacts omit deduplicated source membership.
+        scores = pd.to_numeric(subset.get('cross_industry_score_100', pd.Series(dtype=float)), errors='coerce')
+        eligible = int(subset.v031_research_eligible.map(_yes).sum()) if 'v031_research_eligible' in subset else 0
+        success = subset.fetch_error.fillna('').eq('') if 'fetch_error' in subset else pd.Series(False, index=subset.index)
+        metrics = subset.reindex(columns=FINANCIAL_FIELDS).apply(pd.to_numeric, errors='coerce')
+        has_financials = metrics.replace([float('inf'), float('-inf')], float('nan')).notna().any(axis=1)
+        rows.append({
+            'market': market, 'official_source': key, 'official_source_status': status,
+            'official_rows_received': int(source.get('accepted_pattern', 0) or 0),
+            'publisher_exports_imported': '|'.join(sorted(export_ids)),
+            'listing_backed_tickers_n': listing_backed,
+            'discovered_universe_n': len(ext),
+            'discovered_universe_share_pct': round(100 * len(ext) / len(universe), 2) if len(universe) else 0.0,
+            'selected_for_vendor_fetch_n': int(selected.market.eq(market).sum()),
+            'analyzed_n': len(subset),
+            'analysis_share_pct': round(100 * len(subset) / total, 2) if total else 0.0,
+            'successful_vendor_fetch_n': int(success.sum()),
+            'financial_observations_n': int((success & has_financials).sum()),
+            'scored_n': int(scores.notna().sum()),
+            'industry_unclassified_n': int(subset.peer_group.eq('unclassified').sum()),
+            'industry_unclassified_pct': round(100 * subset.peer_group.eq('unclassified').mean(), 2) if len(subset) else 0,
+            'screening_eligible_n': eligible,
+            'screening_eligible_rate_pct': round(100 * eligible / len(subset), 2) if len(subset) else 0,
+            'coverage_status': coverage,
+            'coverage_claim': 'PARTIAL_UNIVERSE_NOT_COMPARABLE_CENSUS',
+        })
+    frame = pd.DataFrame(rows)
+    shares = frame.discovered_universe_share_pct
+    dominant = frame.loc[shares.idxmax(), 'market'] if len(universe) else ''
+    status = ('SNAPSHOT_COVERAGE_NOT_AUDITED' if mode == 'off' else
+              'PARTIAL_COVERAGE' if official_missing else 'SUPPLEMENTAL_ONLY')
+    metrics = {
+        'market_coverage_status': status,
+        'markets_without_retrieved_official_issuer_list': official_missing,
+        'dominant_market': dominant,
+        'dominant_market_share_pct': float(shares.max()),
+        'dominant_market_selected_share_pct': (
+            round(100 * selected.market.eq(dominant).mean(), 2) if dominant and len(selected) else 0),
+        'market_concentration_warning': bool(shares.max() > 50),
+        'full_five_market_census_verified': False,
+        'complete_market_comparable_rankings_allowed': False,
+    }
+    frame.to_csv(outputs/'38_market_coverage_audit.csv', index=False, encoding='utf-8-sig')
+    comparison = frame[['market', 'discovered_universe_n', 'selected_for_vendor_fetch_n',
+                        'financial_observations_n', 'screening_eligible_n', 'coverage_status']].copy()
+    comparison['archive_analyzed_n'] = comparison.market.map(lambda market: ARCHIVE_COUNTS[market][0])
+    comparison['archive_analyzed_share_pct'] = (100 * comparison.archive_analyzed_n / 1722).round(2)
+    comparison['archive_screening_eligible_n'] = comparison.market.map(lambda market: ARCHIVE_COUNTS[market][1])
+    comparison['current_mode'] = mode
+    comparison['current_run_status'] = 'ALL_FINANCIAL_FETCHES_FAILED' if failed_fetches is not None else 'FINISHED'
+    comparison.to_csv(outputs/'45_coverage_comparison.csv', index=False, encoding='utf-8-sig')
+    return frame, metrics
 
 
 def produce_research_queues(outputs:Path,per_market:int=5,global_top:int=10)->dict:

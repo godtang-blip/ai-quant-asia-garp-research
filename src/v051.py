@@ -8,15 +8,20 @@ import datetime as dt
 import json
 from pathlib import Path
 from .v05 import run as run_v05
-from .quality_v051 import enhance_v051
+from .quality_v051 import coverage_audit, enhance_v051
+from .v031 import FundamentalsUnavailable
 
 
 def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_official',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None,
         per_region:int=90,evidence_mode:str='full',evidence_limit:int=8,
         asof_date:dt.date|None=None)->dict:
-    meta=run_v05(universe,output,max_symbols,discover_mode,fx_mode,delay_seconds,
-                 snapshot_csv,per_region,evidence_mode,evidence_limit,asof_date)
+    try:
+        meta=run_v05(universe,output,max_symbols,discover_mode,fx_mode,delay_seconds,
+                     snapshot_csv,per_region,evidence_mode,evidence_limit,asof_date)
+    except FundamentalsUnavailable as exc:
+        coverage_audit(output, discover_mode, failed_fetches=exc.attempts)
+        raise
     audit=enhance_v051(output,universe.parent,discover_mode)
     meta['pipeline_revision']='0.5.1'
     meta['v051_market_evidence_quality']=audit
