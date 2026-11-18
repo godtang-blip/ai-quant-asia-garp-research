@@ -1,0 +1,4 @@
+ticker,observation,required_manual_check,status
+8035.T,"v0.1 November 2026 forward PE 6.80; external estimates differed substantially; original filings and price/EPS timing not reconciled",Verify forecast EPS fiscal year and local quote/share split with dated source,OPEN
+6857.T,"v0.1 November 2026 forward PE 114.39; external estimates differed substantially",Verify forecast EPS time period share basis and consensus source,OPEN
+005930.KS,"v0.1 November 2026 forward PE 2.50 and reported revenue growth 126.8%; financial periods unconfirmed",Verify fiscal quarter growth basis forward EPS and valuation source,OPEN

@@ -27,3 +27,36 @@ ticker,company,market,peer_group,industry_thesis
 7203.T,Toyota Motor,Japan,automakers,Global scale and hybrid mix
 7267.T,Honda Motor,Japan,automakers,Vehicle operations and capital allocation
 000270.KS,Kia,Korea,automakers,Vehicle mix and margins
+3690.HK,Meituan,Hong Kong,platforms,Local commerce demand and margin expansion
+9618.HK,JD.com,Hong Kong,platforms,E-commerce efficiency and logistics scale
+4689.T,LY Corporation,Japan,platforms,Digital advertising commerce ecosystem
+4755.T,Rakuten Group,Japan,platforms,E-commerce fintech and mobile turnaround
+6645.T,OMRON,Japan,industrial_electrification,Factory sensing and automation cycles
+6861.T,KEYENCE,Japan,industrial_electrification,High-value factory automation and sensors
+1211.HK,BYD,Hong Kong,automakers,EV platform vertical integration and exports
+0175.HK,Geely Automobile,Hong Kong,automakers,EV brand mix and auto exports
+2015.HK,Li Auto,Hong Kong,automakers,Premium EV product cycles
+9866.HK,NIO,Hong Kong,automakers,Premium EV and battery swap unit economics
+7974.T,Nintendo,Japan,gaming_media,Console installed base and software economics
+6758.T,Sony Group,Japan,gaming_media,Gaming music and image sensor franchises
+3659.T,Nexon,Japan,gaming_media,Gaming IP lifecycle and recurring spend
+259960.KS,Krafton,Korea,gaming_media,Global game IP and live service monetization
+036570.KS,NCSoft,Korea,gaming_media,Game release execution and franchise durability
+263750.KS,Pearl Abyss,Korea,gaming_media,Game pipeline and launch catalyst
+9999.HK,NetEase,Hong Kong,gaming_media,Game IP and digital platform monetization
+293490.KS,Kakao Games,Korea,gaming_media,Mobile game distribution and new IP
+207940.KS,Samsung Biologics,Korea,healthcare_biopharma,Biologics CDMO capacity utilization
+068270.KS,Celltrion,Korea,healthcare_biopharma,Biosimilar market access and pricing
+4503.T,Astellas Pharma,Japan,healthcare_biopharma,Drug pipeline and patent cycle
+4568.T,Daiichi Sankyo,Japan,healthcare_biopharma,Oncology drug innovation and commercialization
+4519.T,Chugai Pharmaceutical,Japan,healthcare_biopharma,Specialized biopharma research franchise
+2269.HK,WuXi Biologics,Hong Kong,healthcare_biopharma,Contract biologics services and geopolitics
+1093.HK,CSPC Pharmaceutical,Hong Kong,healthcare_biopharma,Drug portfolio and pipeline transition
+051900.KS,LG Household & Health Care,Korea,consumer_brands,Beauty brands and regional exposure
+090430.KS,Amorepacific,Korea,consumer_brands,K-beauty brand overseas channels
+4911.T,Shiseido,Japan,consumer_brands,Prestige beauty and restructuring
+9983.T,Fast Retailing,Japan,consumer_brands,International retail expansion and inventory efficiency
+2020.HK,ANTA Sports,Hong Kong,consumer_brands,Sportswear brand portfolio and channel strategy
+2331.HK,Li Ning,Hong Kong,consumer_brands,Athletic wear market and inventory cycles
+4452.T,Kao Corporation,Japan,consumer_brands,Consumer brands and operating margin recovery
+2802.T,Ajinomoto,Japan,consumer_brands,Food ingredients and overseas margin growth
