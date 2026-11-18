@@ -11,7 +11,7 @@ import re
 import unicodedata
 
 import pandas as pd
-from .discovery_v031 import REGIONS
+from .discovery_v031 import REGIONS, minimum_market_fetches
 from .listing_exports import VENUES
 from .evidence import read_manual_decisions, render_evidence_book
 
@@ -85,6 +85,8 @@ def coverage_audit(outputs: Path, mode: str, failed_fetches: pd.DataFrame | None
     logs = _read(outputs, '12_discovery_sources_log.csv')
     logmap = {str(r.source): r.to_dict() for _, r in logs.iterrows()}
     total = len(ranked)
+    capped = mode == 'all5_official' and 0 < len(selected) < len(universe)
+    floor = minimum_market_fetches(len(selected)) if capped else None
     rows = []
     official_missing = []
     for market, key in SOURCE_KEYS.items():
@@ -120,6 +122,7 @@ def coverage_audit(outputs: Path, mode: str, failed_fetches: pd.DataFrame | None
         success = subset.fetch_error.fillna('').eq('') if 'fetch_error' in subset else pd.Series(False, index=subset.index)
         metrics = subset.reindex(columns=FINANCIAL_FIELDS).apply(pd.to_numeric, errors='coerce')
         has_financials = metrics.replace([float('inf'), float('-inf')], float('nan')).notna().any(axis=1)
+        selected_n = int(selected.market.eq(market).sum())
         rows.append({
             'market': market, 'official_source': key, 'official_source_status': status,
             'official_rows_received': int(source.get('accepted_pattern', 0) or 0),
@@ -127,7 +130,10 @@ def coverage_audit(outputs: Path, mode: str, failed_fetches: pd.DataFrame | None
             'listing_backed_tickers_n': listing_backed,
             'discovered_universe_n': len(ext),
             'discovered_universe_share_pct': round(100 * len(ext) / len(universe), 2) if len(universe) else 0.0,
-            'selected_for_vendor_fetch_n': int(selected.market.eq(market).sum()),
+            'selected_for_vendor_fetch_n': selected_n,
+            'sample_share_pct': round(100 * selected_n / len(selected), 2) if len(selected) else 0.0,
+            'market_fetch_floor_target_n': floor,
+            'market_fetch_floor_shortfall_n': max(0, floor - selected_n) if capped else None,
             'analyzed_n': len(subset),
             'analysis_share_pct': round(100 * len(subset) / total, 2) if total else 0.0,
             'successful_vendor_fetch_n': int(success.sum()),
@@ -194,8 +200,10 @@ def produce_research_queues(outputs:Path,per_market:int=5,global_top:int=10)->di
             results.append(d)
     frame=pd.DataFrame(results)
     frame.to_csv(outputs/'39_market_research_queue.csv',index=False,encoding='utf-8-sig')
+    market_frame = frame[frame.lane.eq('MARKET_COVERAGE_REVIEW')]
+    market_frame.to_csv(outputs/'46_market_stratified_research_queue.csv',index=False,encoding='utf-8-sig')
     return {'global_candidates_n':min(global_top,len(filtered)),
-            'cross_market_review_rows_n':len(frame)-min(global_top,len(filtered))}
+            'cross_market_review_rows_n':len(market_frame)}
 
 
 def audit_news(outputs:Path, data:Path)->dict:

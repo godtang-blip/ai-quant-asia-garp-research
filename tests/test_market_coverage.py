@@ -78,13 +78,32 @@ def test_export_rejects_untrusted_inputs(tmp_path, row):
         load_listing_export(path, 'HKEX', date(2026, 11, 18))
 
 
-def test_fetch_budget_tracks_discovered_counts():
-    universe = pd.DataFrame({'market': ['Taiwan'] * 12 + ['Japan'] * 3,
-                             'ticker': [f'TICKER{i}' for i in range(15)]})
-    sample = discovery.select_market_proportional(universe, 10)
-    assert sample.market.value_counts().to_dict() == {'Taiwan': 8, 'Japan': 2}
+def _universe_with_counts(counts):
+    return pd.DataFrame([(market, f'{market}-{i}') for market, count in counts.items()
+                         for i in range(count)], columns=['market', 'ticker'])
+
+
+def test_fetch_budget_protects_all_five_markets_from_archived_imbalance():
+    universe = _universe_with_counts({
+        'Korea': 99, 'Japan': 310, 'China': 91, 'Hong Kong': 101, 'Taiwan': 1121,
+    })
+    sample = discovery.select_market_coverage_aware(universe, 150)
+    counts = sample.market.value_counts()
+    assert len(sample) == sample.ticker.nunique() == 150
+    assert len(counts) == 5 and counts.min() >= 15
+    assert 30 < counts['Taiwan'] < 98  # Above equal shares, below the old proportional allocation.
     shuffled = universe.sample(frac=1, random_state=11)
-    assert discovery.select_market_proportional(shuffled, 10).ticker.tolist() == sample.ticker.tolist()
+    assert discovery.select_market_coverage_aware(shuffled, 150).ticker.tolist() == sample.ticker.tolist()
+
+
+def test_fetch_budget_uses_available_names_and_redistributes_unused_floor():
+    universe = _universe_with_counts({'Taiwan': 300, 'Japan': 30, 'Korea': 2, 'China': 1})
+    sample = discovery.select_market_coverage_aware(universe, 50)
+    assert len(sample) == 50
+    assert sample.market.value_counts().to_dict() == {'Taiwan': 39, 'Japan': 8, 'Korea': 2, 'China': 1}
+    scarce_sample = discovery.select_market_coverage_aware(universe, 2)
+    assert set(scarce_sample.market) == {'China', 'Korea'}
+    assert len(discovery.select_market_coverage_aware(universe, 0)) == len(universe)
 
 
 def test_five_market_coverage_and_fundamentals_audited_separately(tmp_path, monkeypatch):
@@ -142,6 +161,13 @@ def test_five_market_coverage_and_fundamentals_audited_separately(tmp_path, monk
     comparison = pd.read_csv(output / '45_coverage_comparison.csv').set_index('market')
     assert comparison.loc['Taiwan', 'archive_analyzed_share_pct'] == 65.1
     assert comparison.loc['Taiwan', 'discovered_universe_n'] == 2
+
+    capped = tmp_path / 'capped'
+    v051.run(universe, capped, max_symbols=5, delay_seconds=0, fx_mode='off', evidence_mode='off')
+    capped_audit = pd.read_csv(capped / '38_market_coverage_audit.csv')
+    assert capped_audit.selected_for_vendor_fetch_n.tolist() == [1] * 5
+    assert capped_audit.market_fetch_floor_target_n.tolist() == [1] * 5
+    assert capped_audit.market_fetch_floor_shortfall_n.tolist() == [0] * 5
 
     monkeypatch.setattr(v031, '_fetch_vendor', unavailable)
     output = tmp_path / 'failed'

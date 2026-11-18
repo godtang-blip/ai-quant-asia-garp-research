@@ -13,11 +13,13 @@
 ## Five-market coverage follow-up
 
 The `all5_official` workflow now supports dated exchange exports alongside the
-live JPX, TWSE, and optional KRX connectors. The fetch cap follows the relative
-sizes of the discovered markets. The coverage audit reports listing membership,
+live JPX, TWSE, and optional KRX connectors. The fetch cap reserves research space for each market before assigning the
+remaining slots by available ticker count. The coverage audit reports listing membership,
 vendor financial availability, and screening eligibility separately. See the
 [coverage audit, source matrix, and export instructions](docs/FIVE_MARKET_COVERAGE.md).
-The history below describes each original release and its observed results.
+The market-only investigation queue is exported separately in
+`46_market_stratified_research_queue.csv`. The history below describes each
+original release and its observed results.
 
 ## Version History — Problems Encountered, Why They Mattered, and What Changed
 

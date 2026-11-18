@@ -16,14 +16,17 @@ Every accepted source is recorded even if it repeats a curated or already discov
 
 ## Reproduce the comparison
 
-Run the existing `src.v051` command with `--discover-mode all5_official`. Under this mode a cap divides fetches in proportion to the number of discovered tickers per market, rounded to whole securities. A stable hash picks tickers within each market so publisher row order does not determine the sample. A cap can leave a small market with zero selections. Use `--max-symbols 0` for all discovered tickers. Legacy discovery modes retain their original sampling.
+Run `src.v051` with `--discover-mode all5_official`. At the default cap of 150, the sampler reserves 15 fetch attempts for each market, or every discovered ticker if fewer than 15 are available. For other positive caps the target is one tenth of the cap rounded down, with a minimum of one. If the cap is smaller than the number of available markets, markets with the fewest discovered names get first access. Unused slots are distributed in proportion to the remaining ticker counts, with whole-slot rounding. A stable hash picks tickers within each market so publisher row order does not determine the sample. Use `--max-symbols 0` for all discovered tickers. Legacy discovery modes retain their original sampling.
+
+Using the archived market counts as a synthetic discovery input, the old proportional design gives Taiwan 98 out of 150 fetch slots. The revised design gives Taiwan 65, Japan 28, and Korea, mainland China, and Hong Kong 19 each. The reserve reduces the effect of uneven source access on the research sample. Actual financial availability and eligibility still depend on each ticker's data and the existing gates.
 
 - `11_discovery_universe.csv` records each ticker and all its source IDs.
 - `12_discovery_sources_log.csv` records scope, accepted rows, failures, and imports' source URL, date and normalized-file checksum.
-- `38_market_coverage_audit.csv` reports discovered and listing-backed tickers, fetch attempts and successes, rows with at least one finite financial field, scored rows, and candidates that pass the existing screen. A response with no usable financial fields adds to fetch successes only.
+- `38_market_coverage_audit.csv` reports discovered and listing-backed tickers, the sample share and any shortfall against the market target, fetch attempts and successes, rows with at least one finite financial field, scored rows, and candidates that pass the existing screen. A response with no usable financial fields adds to fetch successes only.
+- `46_market_stratified_research_queue.csv` lists eligible candidates by market and flags markets that need manual review. Global ranking remains in `01_all_research_candidates.csv`, and `39_market_research_queue.csv` retains both existing lanes for compatibility.
 - `45_coverage_comparison.csv` shows the historical analyzed and eligible counts beside the current discovered, selected, financial-observation and eligible counts. It remains available if every fundamental fetch fails. Different source dates and fetch budgets limit direct comparison. The archive lacks a separate financial-observation count.
 
-With identical curated, live-source, and vendor fixture inputs, adding five venue exports expanded discovery from 2 to 6 tickers and listing-backed coverage from 1 to 6. Financial observations were available for 5 of the 6, and 0 passed screening. They also verify that the sample preserves an 80/20 input mix at a ten-ticker cap. These are controlled comparisons. No new live five-market coverage percentage has been established.
+With identical curated, live-source, and vendor fixture inputs, adding five venue exports expanded discovery from 2 to 6 tickers and listing-backed coverage from 1 to 6. Financial observations were available for 5 of the 6, and 0 passed screening. These are controlled comparisons. No new live five-market coverage percentage has been established.
 
 ## Supply publisher exports
 

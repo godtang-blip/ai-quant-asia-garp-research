@@ -127,7 +127,12 @@ def test_coverage_status_and_no_fake_five_market_census(tmp_path):
 
 def test_global_and_market_queues_are_separate(tmp_path):
     outputs,data=_fixture_outputs(tmp_path)
+    original = (outputs/'01_all_research_candidates.csv').read_bytes()
     produce_research_queues(outputs,per_market=1,global_top=2)
+    assert (outputs/'01_all_research_candidates.csv').read_bytes() == original
+    market_only = pd.read_csv(outputs/'46_market_stratified_research_queue.csv')
+    assert set(market_only.lane) == {'MARKET_COVERAGE_REVIEW'}
+    assert set(market_only.market_group) == {'Korea', 'Japan', 'China', 'Hong Kong', 'Taiwan'}
     queue=pd.read_csv(outputs/'39_market_research_queue.csv')
     assert queue[queue.lane.eq('GLOBAL_UNQUOTED_SCORE')].ticker.tolist()==['2330.TW','7203.T']
     assert 'Hong Kong' in set(queue[queue.priority_interpretation.eq('NO_ELIGIBLE_ISSUER_MANUAL_CHECK')].market_group)

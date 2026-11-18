@@ -150,20 +150,40 @@ def discover_five_markets(base:pd.DataFrame, mode:str='all5',per_region:int=90)-
     return result.reset_index(drop=True), log.fillna('')
 
 
-def select_market_proportional(universe: pd.DataFrame, max_symbols: int) -> pd.DataFrame:
-    """Apply the fetch budget in proportion to discovered security counts."""
+def minimum_market_fetches(max_symbols: int) -> int:
+    """Reserve up to half the budget across the five markets, with a one-name floor."""
+    return max(1, max_symbols // (2 * len(REGIONS))) if max_symbols > 0 else 0
+
+
+def select_market_coverage_aware(universe: pd.DataFrame, max_symbols: int) -> pd.DataFrame:
+    """Give each available market a floor, then allocate by remaining capacity."""
     if max_symbols < 0:
         raise ValueError('max_symbols must be >=0')
     if max_symbols == 0 or max_symbols >= len(universe):
         return universe.copy().reset_index(drop=True)
-    groups = dict(tuple(universe.groupby('market', sort=True)))
-    allocations = {market: divmod(len(group) * max_symbols, len(universe))
-                   for market, group in groups.items()}
-    counts = {market: quotient for market, (quotient, _) in allocations.items()}
-    remaining = max_symbols - sum(counts.values())
+    universe = universe.reset_index(drop=True)
+    groups = dict(tuple(universe.groupby('market', sort=True, dropna=False)))
+    floor = minimum_market_fetches(max_symbols)
+    counts = dict.fromkeys(groups, 0)
+    remaining = max_symbols
+    # If the cap cannot cover every market, give the scarcest lists first access.
+    market_order = sorted((market for market in REGIONS if market in groups),
+                          key=lambda market: (len(groups[market]), market))
+    for market in market_order:
+        counts[market] = min(floor, len(groups[market]), remaining)
+        remaining -= counts[market]
+
+    capacity = {market: len(group) - counts[market] for market, group in groups.items()}
+    total_capacity = sum(capacity.values())
+    allocations = {market: divmod(size * remaining, total_capacity)
+                   for market, size in capacity.items()}
+    for market, (whole, _) in allocations.items():
+        counts[market] += whole
+    leftover = max_symbols - sum(counts.values())
     by_remainder = sorted(groups, key=lambda market: -allocations[market][1])
-    for market in by_remainder[:remaining]:
+    for market in by_remainder[:leftover]:
         counts[market] += 1
+
     selected = []
     for market, group in groups.items():
         # Keep the sample independent of publisher row order and security code sequence.

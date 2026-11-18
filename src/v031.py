@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from .discovery_v031 import discover_five_markets, select_market_balanced, select_market_proportional
+from .discovery_v031 import discover_five_markets, select_market_balanced, select_market_coverage_aware
 from .accounting import issuer_evidence, accounting_basis
 from .fx import YahooFX, normalized_values
 from .ranking import valid_number
@@ -200,7 +200,7 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     if evidence_limit < 0 or evidence_limit > 30:raise ValueError('evidence_limit must be 0..30')
     base=_read_curated(universe_file)
     combined, discovery_log=discover_five_markets(base,discover_mode,per_region)
-    selector = select_market_proportional if discover_mode == 'all5_official' else select_market_balanced
+    selector = select_market_coverage_aware if discover_mode == 'all5_official' else select_market_balanced
     selected = selector(combined, max_symbols)
     outputs.mkdir(parents=True, exist_ok=True)
     for table, name in ((combined, '11_discovery_universe.csv'),
@@ -403,7 +403,7 @@ def main():
     p=argparse.ArgumentParser(description='v0.3.1 independent Asia equity research; no trading')
     p.add_argument('--universe',type=Path,default=Path('data/universe.csv'))
     p.add_argument('--output',type=Path,default=Path('outputs'))
-    p.add_argument('--max-symbols',type=int,default=150,help='0=all discovered, >0=market-balanced limit')
+    p.add_argument('--max-symbols',type=int,default=150,help='0=all discovered, >0=fetch cap with market coverage')
     p.add_argument('--discover-mode',choices=['off','nikkei','regional5','all5','all5_official'],default='all5')
     p.add_argument('--fx-mode',choices=['live','off'],default='live')
     p.add_argument('--delay-seconds',type=float,default=1.0)
