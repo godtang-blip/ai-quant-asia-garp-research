@@ -89,3 +89,19 @@ Tushare Pro is optional. Set the Actions secret `TUSHARE_TOKEN` only if the acco
 For a portable BSE acquisition, use an authorized Tushare Pro client or vendor export service from an approved environment. Request `stock_basic(exchange="BSE", list_status="L")` with these provider fields: `ts_code,symbol,name,exchange,market,list_status,list_date,delist_date`. For Shenzhen, run the same query with `exchange="SZSE"`. Retain only provider-supplied fields and append the confirmed effective snapshot date as `as_of`; save UTF-8 `BSE.csv` and `SZSE.csv` preserving six-character codes. Do not substitute retrieval time for an unknown effective date. Verify the completed provider response and usage rights before transferring files, set `GARP_TUSHARE_EXPORT_DIR`, then run `discovery_only` and `china_only`. The importer requires active BSE-board rows, excludes NEEQ-only and delisted rows, validates date and scope independently by file, and records the hash and import classification. The dated publisher export route remains available independently.
 
 In the cloud smoke run for this change, all three exchanges produced zero new live listings; BaoStock failed TCP DNS preflight. No Tushare token or dated export was available. The prior Actions evidence of 1,700 SSE Main Board and 619 STAR live securities remains the verified baseline. This change does not establish live Shenzhen or Beijing coverage.
+
+## Single-run acquisition acceptance
+
+Run the existing Actions workflow on the PR branch with `discovery_only`, `china_only`, and `china_provider_probe` enabled. This run skips financials and has three distinct outcomes:
+
+| Artifact | Interpretation |
+|---|---|
+| `51_china_provider_probe.csv` | Transport and safe response-shape metadata. An HTTP response, reported total, or recognized set of keys does not establish a usable data source. |
+| `49_china_board_coverage.csv` and `12_discovery_sources_log.csv` | Source-specific listing retrieval and accepted rows, with provenance, dates and available completeness checks. |
+| `52_china_acquisition_acceptance.csv` | One row each for SZSE Main Board, ChiNext and BSE, showing accepted live vs. imported counts, outstanding external requirements and whether the resulting listings can enter a normal financial fetch. Screening eligibility remains unevaluated. |
+
+The opt-in probe sends an unauthenticated HEAD request to Tushare's HTTPS API host. A reachable transport, including an HTTP method refusal, does not verify `stock_basic` or entitlement. If permitted by the provider, set the repository variable `GARP_EASTMONEY_PROBE_ALLOWED=1` to enable three Eastmoney GET requests (one row per SZSE Main Board, ChiNext and BSE selector). Leave this variable unset unless the operator has confirmed that the intended probe is allowed under applicable terms. Permission, selector semantics, board membership and pagination have yet to be independently established. The workflow does not follow redirects, retry, spoof browser headers, store samples, or add probe results to the universe.
+
+Run paid or authorized acquisition only after confirming the account is entitled to both `stock_basic` queries. The discovery-only run uses the optional repository secret `TUSHARE_TOKEN` if configured. After validating actual retrieval, a normal `all5_official` dispatch can opt in with `enable_tushare_research`. The default is false, and the ordinary research step receives an empty token unless explicitly enabled. These inputs preserve the existing screening and security-type gates. A dated authorized export remains an alternative to credential-based acquisition.
+
+The readiness iteration's cloud test could not reach Tushare through the proxy and had zero accepted listings on each missing board. Eastmoney was skipped because permission was unconfirmed. No authorized SZSE/BSE CSV or token was available. These findings do not establish GitHub runner reachability.

@@ -10,6 +10,14 @@ on:
         description: 'Limit discovery-only diagnostics to mainland China'
         type: boolean
         default: false
+      china_provider_probe:
+        description: 'Run minimal independent-provider probes in China-only discovery'
+        type: boolean
+        default: false
+      enable_tushare_research:
+        description: 'Allow an already validated Tushare token in normal official research'
+        type: boolean
+        default: false
       max_symbols:
         description: 'Max fetched stocks; 150 recommended; 0=all discovered (may be slow)'
         required: true
@@ -65,6 +73,7 @@ jobs:
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
           GARP_LISTING_EXPORT_DIR: ${{ vars.GARP_LISTING_EXPORT_DIR }}
           GARP_ENABLE_BAOSTOCK: ${{ vars.GARP_ENABLE_BAOSTOCK }}
+          TUSHARE_TOKEN: ${{ inputs.enable_tushare_research && secrets.TUSHARE_TOKEN || '' }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
           GARP_INPUT_EVIDENCE_MODE: ${{ inputs.evidence_mode }}
@@ -92,6 +101,8 @@ jobs:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           GARP_TUSHARE_EXPORT_DIR: ${{ vars.GARP_TUSHARE_EXPORT_DIR }}
           GARP_BAOSTOCK_SNAPSHOT: ${{ vars.GARP_BAOSTOCK_SNAPSHOT }}
+          GARP_CHINA_PROVIDER_PROBE: ${{ inputs.china_provider_probe && '1' || '0' }}
+          GARP_EASTMONEY_PROBE_ALLOWED: ${{ vars.GARP_EASTMONEY_PROBE_ALLOWED }}
           GARP_CHINA_ONLY: ${{ inputs.china_only }}
         run: |
           if [[ "$GARP_CHINA_ONLY" == true ]]; then

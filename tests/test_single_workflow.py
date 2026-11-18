@@ -55,3 +55,10 @@ def test_listing_only_dispatch_skips_research_and_quality_steps():
     assert 'if: ${{ inputs.discovery_only }}' in script
     assert script.count('if: ${{ !inputs.discovery_only }}') == 2
     assert 'python -m src.discovery_smoke --output outputs' in script
+
+
+def test_normal_tushare_requires_explicit_input():
+    script = (WORKFLOWS / 'run-research-v05.yml').read_text(encoding='utf-8')
+    integrated = script.split('      - name: Integrated three-stage research / no orders')[1].split(
+        '      - name: Listing discovery only')[0]
+    assert "TUSHARE_TOKEN: ${{ inputs.enable_tushare_research && secrets.TUSHARE_TOKEN || '' }}" in integrated

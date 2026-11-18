@@ -26,3 +26,28 @@ def test_report_distinguishes_board_counts_vendor_status_and_verified_benchmarks
     assert counts.loc[('BSE','live_BSE'), 'accepted_rows'] == 0
     assert counts.loc[('BSE','live_BSE'), 'status'] == 'FAILED_NO_FALLBACK'
     assert overlap.set_index('ticker').loc['300001.SZ','board'] == 'UNRESOLVED'
+
+
+def test_acceptance_counts_deduplicated_input_and_keeps_probe_separate():
+    from src.china_coverage_report import acquisition_acceptance
+
+    overlaps = pd.DataFrame([
+        dict(board='SZSE_MAIN', listing_source_ids='["tushare_SZSE_api","export_SZSE"]'),
+        dict(board='SZSE_MAIN', listing_source_ids='["tushare_SZSE_api"]'),
+        dict(board='BSE', listing_source_ids='["export_BSE"]'),
+    ])
+    logs = pd.DataFrame([
+        dict(source='tushare_SZSE_api', status='OK', source_kind='THIRD_PARTY_SECURITY_MASTER',
+             retrieval_mode='LIVE_VENDOR_API'),
+        dict(source='export_SZSE', status='OK', source_kind='PUBLISHER_EXPORT'),
+        dict(source='export_BSE', status='OK', source_kind='PUBLISHER_EXPORT'),
+    ]).fillna('')
+    probes = [dict(provider='Eastmoney', scope='SZSE_CHINEXT reported selector', status='HTTP_ENDPOINT_REACHED',
+                   http_status=200)]
+    result = acquisition_acceptance(overlaps, logs, probes).set_index('board')
+    assert result.loc['SZSE_MAIN', 'live_accepted_n'] == 2
+    assert result.loc['SZSE_MAIN', 'combined_unique_accepted_n'] == 2
+    assert result.loc['SZSE_CHINEXT', 'acceptance'] == 'NO_ACCEPTED_LISTINGS'
+    assert not result.loc['SZSE_CHINEXT', 'can_enter_normal_financial_fetch']
+    assert result.loc['BSE','acceptance'] == 'IMPORTED_ONLY'
+    assert result.screening_eligibility.eq('NOT_EVALUATED').all()
