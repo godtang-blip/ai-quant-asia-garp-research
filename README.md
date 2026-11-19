@@ -103,3 +103,8 @@ This project did not begin as a finished investment model with known answers. It
 - Separate cloud probes hit access restrictions and did not validate new live China listings. The diagnostics distinguish blocked routes, SDK timeouts, provisional BaoStock inventory and authorized imports. [Discovery and source investigation record](docs/CHINA_A_SHARE_DISCOVERY.md)
 
 See the [changelog](CHANGELOG.md), [v0.5 retrospective audit](docs/V051_RETROSPECTIVE_AUDIT.md), and [archived v0.3.1 documentation](docs/README_v031_legacy.md) for the earlier runs and experiments.
+
+## v0.6 통합 리서치
+
+Python 3.11에서 `python -m src.v06 --help`로 5개 시장의 실행 범위, 재무 예산,
+공시 대조, 체크포인트 옵션을 확인할 수 있습니다. [운영 가이드](docs/V06_RESEARCH.md)

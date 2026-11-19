@@ -56,3 +56,9 @@
 - Started with a small candidate set and growth/value-based screening. Observed semiconductor clustering and suspect Yahoo-derived metrics; these observations motivated peer-group and data-quality checks rather than stronger return claims.
 
 **Comparison caution:** Historical runs use differing vendor snapshots, universes and scoring rules. The versions do not form a controlled study of investment performance.
+
+## v0.6 개발 변경
+
+- 기존 스크린에 5개 시장의 재무 호출 예산과 재실행용 체크포인트를 연결했습니다.
+- 승인된 공시 export의 출처 등록, 원본 해시 검사, 기간·범위·통화를 일치시킨 수치 대조를 추가했습니다.
+- Gemini v0.5.2 추출기를 옮기고, 커버리지·검토 보류·실행 매니페스트를 기존 산출물과 함께 생성합니다.
