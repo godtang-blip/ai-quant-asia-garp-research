@@ -22,6 +22,12 @@ COLUMNS=['ticker','company','market','evidence_type','published_date','retrieved
          'claim_supported','analyst_note','identifier']
 
 
+EVIDENCE_COLUMNS={'news':['ticker','title','source_url','published_date','source_name','identifier'],
+                  'earnings':['ticker','company','market','quarter_ending','revenue','operating_income','net_income','diluted_eps','currency','data_source','verification_status'],
+                  'filings':['ticker','title','source_url','published_date','source_name','identifier','filing_source','verification_status'],
+                  'ledger':COLUMNS,
+                  'log':['ticker','source','status','detail']}
+
 def _utc():return dt.datetime.now(dt.timezone.utc).isoformat()
 
 def _date_str(s):
@@ -131,11 +137,7 @@ def collect_evidence(candidates:pd.DataFrame,mode:str='full',limit:int=8,
     if mode not in ('off','news','full'):raise ValueError('mode must be off/news/full')
     news=[];earnings=[];filings=[];ledger=[];logs=[]
     if mode=='off' or limit<=0:
-        return {'news':pd.DataFrame(columns=['ticker','title','source_url','published_date','source_name','identifier']),
-                'earnings':pd.DataFrame(columns=['ticker','company','market','quarter_ending','revenue','operating_income','net_income','diluted_eps','currency','data_source','verification_status']),
-                'filings':pd.DataFrame(columns=['ticker','title','source_url','published_date','source_name','identifier','filing_source','verification_status']),
-                'ledger':pd.DataFrame(columns=COLUMNS),
-                'log':pd.DataFrame(columns=['ticker','source','status','detail'])}
+        return {name:pd.DataFrame(columns=columns) for name,columns in EVIDENCE_COLUMNS.items()}
     rows=candidates.head(limit)
     issued={}
     if registry and registry.exists():
@@ -201,9 +203,9 @@ def collect_evidence(candidates:pd.DataFrame,mode:str='full',limit:int=8,
                     {'title':'Analyst registered '+kind, 'source_url':url,
                      'published_date':doc.get('source_date',''),'identifier':t+'|'+kind},
                     'ISSUER_LINK_UNVERIFIED','REGISTERED_NOT_AUTOMATICALLY_VERIFIED')
-    return {'news':pd.DataFrame(news),'earnings':pd.DataFrame(earnings),
-            'filings':pd.DataFrame(filings),'ledger':pd.DataFrame(ledger,columns=COLUMNS),
-            'log':pd.DataFrame(logs,columns=['ticker','source','status','detail'])}
+    observations={'news':news,'earnings':earnings,'filings':filings,'ledger':ledger,'log':logs}
+    return {name:pd.DataFrame(observations[name],columns=columns)
+            for name,columns in EVIDENCE_COLUMNS.items()}
 
 
 def render_evidence_book(candidates:pd.DataFrame, evidence:pd.DataFrame, decisions:pd.DataFrame)->str:

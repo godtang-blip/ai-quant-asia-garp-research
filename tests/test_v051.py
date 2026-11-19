@@ -177,3 +177,34 @@ def test_single_v051_wrapper_preserves_v05_and_adds_manifest(tmp_path,monkeypatc
     assert called==['v05','v051_audit']
     assert m['pipeline_revision']=='0.5.1'
     assert json.loads((outputs/'44_v051_run_manifest.json').read_text())['trade_orders']=='NONE'
+
+
+@pytest.mark.parametrize('mode', ['news', 'off'])
+def test_empty_collected_evidence_preserves_output_schema(tmp_path, monkeypatch, mode):
+    from src.evidence import EVIDENCE_COLUMNS, collect_evidence
+    from src.quality_v051 import audit_news
+
+    outputs,data=_fixture_outputs(tmp_path)
+    calls=[]
+    monkeypatch.setattr('src.evidence.news_rss', lambda *args: calls.append(args) or [])
+    evidence=collect_evidence(pd.read_csv(outputs/'01_all_research_candidates.csv'), mode=mode)
+    assert len(calls)==(3 if mode=='news' else 0)
+    assert {key:list(value.columns) for key,value in evidence.items()}==EVIDENCE_COLUMNS
+    for key,filename in [('news','19_news_headlines.csv'),('ledger','18_evidence_ledger.csv')]:
+        evidence[key].to_csv(outputs/filename,index=False)
+    assert audit_news(outputs,data)['news_headlines_n']==0
+    audit=pd.read_csv(outputs/'40_news_relevance_audit.csv')
+    assert audit.empty and 'issuer_match_status' in audit.columns
+
+
+def test_legacy_blank_news_and_malformed_news_are_distinct(tmp_path):
+    from src.quality_v051 import audit_news
+
+    outputs,data=_fixture_outputs(tmp_path)
+    path=outputs/'19_news_headlines.csv'
+    path.write_text('\ufeff\n', encoding='utf-8')
+    assert audit_news(outputs,data)['news_headlines_n']==0
+    for malformed in ('wrong,header\n', 'ticker,title,source_url,published_date,source_name,identifier\n001,short\n'):
+        path.write_text(malformed)
+        with pytest.raises(ValueError,match='19_news_headlines.csv'):
+            audit_news(outputs,data)
