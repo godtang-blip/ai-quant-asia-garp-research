@@ -194,7 +194,7 @@ class FundamentalsUnavailable(RuntimeError):
 
 def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str='all5',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None, per_region:int=50,
-        evidence_mode:str='full', evidence_limit:int=8)->dict:
+        evidence_mode:str='full', evidence_limit:int=8, *, markets=None, fetch_vendor=None)->dict:
     if max_symbols<0:raise ValueError('max_symbols must be >= 0')
     if fx_mode not in ('live','off'):raise ValueError('fx_mode live/off')
     if evidence_mode not in ('off','news','full'):raise ValueError('evidence_mode off/news/full')
@@ -202,7 +202,8 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     base=_read_curated(universe_file)
     combined, discovery_log=discover_five_markets(base,discover_mode,per_region)
     selector = select_market_coverage_aware if discover_mode == 'all5_official' else select_market_balanced
-    selected = selector(combined, max_symbols)
+    scope = combined if markets is None else combined[combined.market.isin(markets)]
+    selected = selector(scope, max_symbols)
     outputs.mkdir(parents=True, exist_ok=True)
     for table, name in ((combined, '11_discovery_universe.csv'),
                         (discovery_log, '12_discovery_sources_log.csv'),
@@ -236,7 +237,7 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
                 r['data_source']='HISTORICAL_VENDOR_SNAPSHOT_NO_NEW_FX'
             else:r['fetch_error']='NOT_IN_REPLAY_SNAPSHOT'
         else:
-            try:r.update(_fetch_vendor(ticker))
+            try:r.update((fetch_vendor or _fetch_vendor)(ticker))
             except Exception as exc:r['fetch_error']=type(exc).__name__+': '+str(exc)[:130]
         # Validate security type from issuer-level vendor information when available.
         vendor_type=str(r.get('vendor_quote_type') or '').upper().strip()

@@ -1,4 +1,4 @@
-name: Asia GARP v0.5.1 | 5 Markets + Evidence + Valuation (Research Only)
+name: Asia GARP v0.6 | 5 Markets + Evidence + Valuation (Research Only)
 on:
   workflow_dispatch:
     inputs:
@@ -22,10 +22,30 @@ on:
         description: 'Retrieve and validate authorized listing files from a pinned private data repository'
         type: boolean
         default: false
+      legacy_research:
+        description: 'Run the v0.5.1 engine directly'
+        type: boolean
+        default: false
+      full_universe:
+        description: 'Select the full discovered universe, subject to the financial budget'
+        type: boolean
+        default: false
+      financial_budget:
+        description: 'Maximum vendor fetch attempts'
+        type: string
+        default: '25'
+      research_asof:
+        description: 'Optional UTC research date (YYYY-MM-DD)'
+        type: string
+        default: ''
+      report_limit:
+        description: 'Maximum candidates in the v0.6 shortlist (1-5)'
+        type: string
+        default: '5'
       max_symbols:
-        description: 'Max fetched stocks; 150 recommended; 0=all discovered (may be slow)'
+        description: 'Maximum selected securities in bounded mode'
         required: true
-        default: '150'
+        default: '25'
         type: string
       discover_mode:
         description: 'Exchange sources and optional publisher exports, plus regional vendor samples'
@@ -66,9 +86,9 @@ jobs:
           python-version: '3.11'
           cache: pip
       - name: Install reproducible runtime
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt -r requirements-gemini.txt
       - name: Regression and quality gate tests
-        run: python -m pytest -q tests
+        run: python -m pytest -q tests tests_gemini
       - name: Check private listing bundle configuration
         id: listing_bundle_config
         if: ${{ inputs.use_private_listing_bundle }}
@@ -137,9 +157,29 @@ jobs:
           GARP_INPUT_FX_MODE: ${{ inputs.fx_mode }}
           GARP_INPUT_PER_REGION: ${{ inputs.per_region }}
           GARP_INPUT_DISCOVER_MODE: ${{ inputs.discover_mode }}
+          GARP_INPUT_ASOF: ${{ inputs.research_asof }}
+          GARP_INPUT_REPORT_LIMIT: ${{ inputs.report_limit }}
+          GARP_INPUT_LEGACY: ${{ inputs.legacy_research }}
+          GARP_INPUT_FULL: ${{ inputs.full_universe }}
+          GARP_INPUT_FINANCIAL_BUDGET: ${{ inputs.financial_budget }}
           GARP_INPUT_MAX_SYMBOLS: ${{ inputs.max_symbols }}
         run: |
-          python -m src.v051 \
+          engine=(python -m src.v06)
+          extra=(--report-limit "$GARP_INPUT_REPORT_LIMIT" --financial-budget "$GARP_INPUT_FINANCIAL_BUDGET" --checkpoint "$RUNNER_TEMP/garp-financial.sqlite")
+          if [[ "$GARP_INPUT_FULL" == true ]]; then
+            extra+=(--full-universe)
+          fi
+          if [[ "$GARP_INPUT_LEGACY" == true ]]; then
+            engine=(python -m src.v051)
+            extra=()
+            if [[ "$GARP_INPUT_FULL" == true ]]; then
+              GARP_INPUT_MAX_SYMBOLS=0
+            fi
+          fi
+          if [[ -n "$GARP_INPUT_ASOF" ]]; then
+            extra+=(--asof-date "$GARP_INPUT_ASOF")
+          fi
+          "${engine[@]}" "${extra[@]}" \
             --max-symbols "$GARP_INPUT_MAX_SYMBOLS" \
             --discover-mode "$GARP_INPUT_DISCOVER_MODE" \
             --per-region "$GARP_INPUT_PER_REGION" \
@@ -176,6 +216,17 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+          manifest = Path('outputs/67_v06_run_manifest.json')
+          if manifest.is_file():
+              result = json.loads(manifest.read_text())
+              assert result['trade_orders'] == 'NONE'
+              assert result['predictive_validation'] == 'NOT_PERFORMED'
+              print('Financial coverage:', result['financial_status'])
+              if result['financial_status'] != 'SELECTED_UNIVERSE_FETCHED':
+                  print('::warning::Partial financial coverage. See 60_financial_coverage.csv')
+              if not Path('outputs/34_research_quality_v05.json').is_file():
+                  assert result['financial_status'] == 'PARTIAL_OR_FAILED'
+                  raise SystemExit(0)
           q=json.loads(Path('outputs/34_research_quality_v05.json').read_text())
           assert q['trade_orders']=='NONE'
           assert q['future_return_predictive_validation']=='NOT_PERFORMED'
@@ -204,7 +255,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: asia-garp-v051-${{ github.run_id }}
+          name: asia-garp-v06-${{ github.run_id }}
           path: outputs/
           retention-days: 30
           if-no-files-found: warn

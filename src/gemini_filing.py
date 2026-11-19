@@ -344,7 +344,8 @@ def check_observation(proposal: dict, passage: Passage) -> dict | None:
 
 
 class Gemini:
-    def __init__(self, key: str, model: str, max_requests: int, retries: int):
+    def __init__(self, key: str, model: str, max_requests: int, retries: int, *,
+                 max_input_bytes=MAX_INPUT_BYTES, max_output_tokens=MAX_OUTPUT_TOKENS, delay=0):
         from google import genai
         from google.genai import types
 
@@ -356,25 +357,36 @@ class Gemini:
         self.retries = retries
         self.requests = 0
         self.resolved_models = set()
+        self.max_input_bytes = max_input_bytes
+        self.max_output_tokens = max_output_tokens
+        self.delay = delay
+        self.not_before = 0.0
+        self.input_tokens = 0
+        self.output_tokens = 0
 
     def generate(self, contents: str, **config):
         from google.genai.errors import APIError
         from httpx import TransportError
 
-        if len(contents.encode('utf-8')) > MAX_INPUT_BYTES:
+        if len(contents.encode('utf-8')) > self.max_input_bytes:
             raise ValueError('Gemini input limit exceeded')
         for attempt in range(self.retries + 1):
             if self.requests >= self.max_requests:
                 raise BudgetExceeded('Gemini request budget exhausted')
+            time.sleep(max(0, self.not_before - time.monotonic()))
             self.requests += 1
+            self.not_before = time.monotonic() + self.delay
             try:
                 response = self.client.models.generate_content(
                     model=self.model, contents=contents,
                     config=self.types.GenerateContentConfig(
-                        max_output_tokens=MAX_OUTPUT_TOKENS, temperature=0,
+                        max_output_tokens=self.max_output_tokens, temperature=0,
                         thinking_config=self.types.ThinkingConfig(thinking_budget=0),
                         automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
                         **config))
+                usage = getattr(response, 'usage_metadata', None)
+                self.input_tokens += getattr(usage, 'prompt_token_count', None) or 0
+                self.output_tokens += getattr(usage, 'candidates_token_count', None) or 0
                 resolved = getattr(response, 'model_version', None)
                 if resolved:
                     self.resolved_models.add(resolved)

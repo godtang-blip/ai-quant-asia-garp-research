@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 import pandas as pd
 
+from .gemini_filing import is_public_https
+
 
 SOURCES = {
     'KRX': ('Korea', 'OpenDART', ('opendart.fss.or.kr', 'dart.fss.or.kr')),
@@ -81,7 +83,7 @@ def validate_source(row, source_dir):
     if row['market'] != market or not row['ticker'].endswith(VENUE_SUFFIXES[venue]):
         raise ValueError('VENUE_MARKET_MISMATCH')
     url = urlsplit(row['source_url'])
-    if (url.scheme != 'https' or url.netloc != url.hostname or
+    if (not is_public_https(row['source_url']) or
             not any(url.hostname == host or (url.hostname or '').endswith('.' + host) for host in hosts)):
         raise ValueError('UNRECOGNIZED_PRIMARY_SOURCE')
     digest = row['source_sha256']

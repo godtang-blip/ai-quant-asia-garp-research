@@ -15,10 +15,15 @@ from .v031 import FundamentalsUnavailable
 def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_official',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None,
         per_region:int=90,evidence_mode:str='full',evidence_limit:int=8,
-        asof_date:dt.date|None=None)->dict:
+        asof_date:dt.date|None=None, *, markets=None, fetch_vendor=None)->dict:
+    options = {}
+    if markets is not None:
+        options['markets'] = markets
+    if fetch_vendor is not None:
+        options['fetch_vendor'] = fetch_vendor
     try:
         meta=run_v05(universe,output,max_symbols,discover_mode,fx_mode,delay_seconds,
-                     snapshot_csv,per_region,evidence_mode,evidence_limit,asof_date)
+                     snapshot_csv,per_region,evidence_mode,evidence_limit,asof_date, **options)
     except FundamentalsUnavailable as exc:
         coverage_audit(output, discover_mode, failed_fetches=exc.attempts)
         raise
