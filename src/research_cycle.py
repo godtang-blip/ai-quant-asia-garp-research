@@ -447,11 +447,14 @@ def main():
                   'source-dir', 'gemini-cache')
     integer_flags = ('filing-budget', 'max-documents', 'max-requests',
                      'gemini-total-input-budget', 'gemini-total-output-budget')
-    boolean_flags = ('enable-gemini', 'gemini-approved-only')
+    decimal_flags = ('gemini-input-price', 'gemini-output-price', 'gemini-max-cost-usd')
+    boolean_flags = ('enable-gemini', 'gemini-approved-only', 'research-dossier')
     for flag in path_flags:
         parser.add_argument('--' + flag, type=Path)
     for flag in integer_flags:
         parser.add_argument('--' + flag, type=int)
+    for flag in decimal_flags:
+        parser.add_argument('--' + flag, type=float)
     for flag in boolean_flags:
         parser.add_argument('--' + flag, action='store_true')
     args = parser.parse_args()
@@ -469,7 +472,7 @@ def main():
         restore(plan, args.input, args.state)
     elif args.mode == 'aggregate':
         evidence = []
-        for flag in (*path_flags, *integer_flags):
+        for flag in (*path_flags, *integer_flags, *decimal_flags):
             value = getattr(args, flag.replace('-', '_'))
             if value is not None:
                 evidence.extend(('--' + flag, str(value)))

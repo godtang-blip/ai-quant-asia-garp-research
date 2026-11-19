@@ -92,15 +92,19 @@ def dart_stock_code_map(key:str, session=None)->dict[str,dict]:
     return out
 
 
-def dart_recent_filings(stock_code:str,corp_map:dict,key:str,session=None,days:int=180,limit:int=7)->list[dict]:
+def dart_recent_filings(stock_code:str,corp_map:dict,key:str,session=None,days:int=180,limit:int=7,
+                        *, annual_only=False, cutoff=None)->list[dict]:
     import requests
     d=corp_map.get(stock_code)
     if not d:return []
     sess=session or requests
-    end=dt.datetime.now(dt.timezone.utc).date();start=end-dt.timedelta(days=days)
-    res=sess.get('https://opendart.fss.or.kr/api/list.json',params={
-        'crtfc_key':key,'corp_code':d['corp_code'],'bgn_de':start.strftime('%Y%m%d'),
-        'end_de':end.strftime('%Y%m%d'),'page_count':min(100,limit)},timeout=18)
+    end=cutoff or dt.datetime.now(dt.timezone.utc).date()
+    start=end-dt.timedelta(days=days)
+    params={'crtfc_key':key,'corp_code':d['corp_code'],'bgn_de':start.strftime('%Y%m%d'),
+            'end_de':end.strftime('%Y%m%d'),'page_count':min(100,limit)}
+    if annual_only:
+        params['pblntf_detail_ty']='A001'
+    res=sess.get('https://opendart.fss.or.kr/api/list.json',params=params,timeout=18)
     res.raise_for_status();payload=res.json()
     if payload.get('status')=='013':return [] # no records
     if payload.get('status')!='000':raise ValueError('DART list API status '+str(payload.get('status')))

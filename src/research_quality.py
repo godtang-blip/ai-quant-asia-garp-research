@@ -173,6 +173,8 @@ def value_assumptions(path:Path, *, cutoff:dt.date|None=None)->tuple[pd.DataFram
                  valuation_flags='|'.join(issues))
         rows.append(d)
     frame=pd.DataFrame(rows)
+    if frame.empty:
+        frame=pd.DataFrame(columns=DCF_FIELDS+['valuation_status','valuation_flags'])
     return frame, {'valuation_inputs_n':len(source),'valuation_model_valid_n':int(frame.valuation_status.eq('MODELED_MANUAL_INPUT_REVIEWED').sum()) if not frame.empty else 0}
 
 

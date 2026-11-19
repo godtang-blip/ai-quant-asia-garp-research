@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from .evidence import dart_recent_filings, dart_stock_code_map
 from .edinet_filings import API, EDINETError, fetch_edinet, parse_xbrl
 from .filing_evidence import SOURCES, VENUE_SUFFIXES, read_export
 from .filing_statements import StatementError, parse_statement
@@ -122,7 +123,7 @@ def store_original(source_dir, digest, raw):
                 raise SourceUnavailable('EXISTING_SOURCE_HASH_MISMATCH')
 
 
-def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, keys, *, replay_dir=None):
+def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, keys, *, replay_dir=None, selected_tickers=None):
     """Return parsed observations and one measurable outcome per scheduled filing."""
     planned = [(row, False) for row in read_export(native_path)]
     planned += [(row, True) for row in read_export(dart_path)]
@@ -131,6 +132,8 @@ def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, k
     seen = set()
     with requests.Session() as session:
         for row, dart in planned:
+            if selected_tickers is not None and row.get('ticker') not in selected_tickers:
+                continue
             venue = 'KRX' if dart else row.get('venue', '')
             identity = (venue, row.get('ticker', ''), row.get('period_end', ''))
             attempt = dict(venue=venue, ticker=identity[1], status='NOT_TESTED', attempted=False,
@@ -210,6 +213,42 @@ def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, k
                 # Generic transport and document errors may include credentialized parameters.
                 attempt.update(status='FAILED', reason=type(exc).__name__)
     return rows, attempts
+
+
+
+def locate_dart_annual_filings(tickers, key, cutoff, budget):
+    """Resolve up to budget Korean issuers, using one map and one list call per issuer."""
+    if not tickers:
+        return []
+    if not key or budget <= 0:
+        reason = 'DART_API_KEY_MISSING' if not key else 'FILING_BUDGET_EXHAUSTED'
+        return [{'ticker': ticker, 'status': 'BLOCKED', 'reason': reason} for ticker in tickers]
+    outcomes = []
+    with requests.Session() as session:
+        try:
+            mapping = dart_stock_code_map(key, session)
+        except (ValueError, OSError, requests.RequestException) as exc:
+            return [{'ticker': ticker, 'status': 'BLOCKED', 'reason': 'DART_ISSUER_MAP_' + type(exc).__name__}
+                    for ticker in tickers]
+        for index, ticker in enumerate(tickers):
+            issuer = mapping.get(ticker.split('.')[0])
+            row = {'ticker': ticker, 'status': 'BLOCKED'}
+            outcomes.append(row)
+            if index >= budget:
+                row['reason'] = 'FILING_BUDGET_EXHAUSTED'
+            elif not issuer:
+                row['reason'] = 'DART_ISSUER_NOT_MAPPED'
+            else:
+                try:
+                    results = dart_recent_filings(ticker.split('.')[0], mapping, key, session,
+                                                  days=450, limit=5, annual_only=True, cutoff=cutoff)
+                    row.update(official_issuer=issuer, filings=results,
+                               status='METADATA_ONLY' if results else 'BLOCKED',
+                               reason='ANNUAL_PERIOD_AND_ORIGINAL_APPROVAL_REQUIRED' if results else
+                               'NO_DART_ANNUAL_FILING_IN_LOOKBACK')
+                except (ValueError, OSError, requests.RequestException) as exc:
+                    row['reason'] = 'DART_ANNUAL_LIST_' + type(exc).__name__
+    return outcomes
 
 
 def main():
