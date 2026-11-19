@@ -140,6 +140,8 @@ def test_rate_limit_stops_shard_and_budget_is_bounded(tmp_path, monkeypatch):
     assert rows[called[0]]['status'] == 'BLOCKED_PROVIDER'
     assert rows[called[0]]['retry_eligible_now'] is False
     assert cycle.dispatch(plan, state, '', 10, 50, 10, reserved=10) == []
+    assert cycle.dispatch(plan, state, '', 10, 50, 10, reserved=9) == []
+    monkeypatch.setattr(cycle, 'utcnow', lambda: NOW + timedelta(hours=24))
     jobs = cycle.dispatch(plan, state, spec['market'], 10, 50, 10, reserved=9)
     assert jobs == [{'shard': shard, 'budget': 1}]
     cycle.run_shard(plan, shard, state, 2, 0, quota_date=(NOW - timedelta(days=1)).date(),

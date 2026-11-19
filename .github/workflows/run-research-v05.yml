@@ -368,9 +368,16 @@ jobs:
         if: ${{ inputs.cycle_mode == 'initialize' }}
         env:
           GARP_SHARD_SIZE: ${{ vars.GARP_CYCLE_SHARD_SIZE || '100' }}
+          GARP_CLASSIFICATION: ${{ vars.GARP_CLASSIFICATION_REGISTRY }}
         run: |
+          extra=()
+          if [[ -n "$GARP_CLASSIFICATION" ]]; then
+            path="$(realpath -e -- "$GARP_CLASSIFICATION")"
+            [[ "$path" == "$GITHUB_WORKSPACE/"*.csv && -f "$path" ]]
+            extra+=(--classification "$path")
+          fi
           python -m src.research_cycle freeze --input outputs --plan cycle-plan \
-            --cycle-id "$GITHUB_RUN_ID" --shard-size "$GARP_SHARD_SIZE"
+            --cycle-id "$GITHUB_RUN_ID" --shard-size "$GARP_SHARD_SIZE" "${extra[@]}"
       - name: Publish cycle plan
         if: ${{ inputs.cycle_mode == 'initialize' }}
         uses: actions/upload-artifact@v4

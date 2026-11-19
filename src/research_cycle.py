@@ -14,7 +14,7 @@ import time
 
 import pandas as pd
 
-from .industry_classification import EXCLUDED, vendor_security_type
+from .industry_classification import EXCLUDED, load_registry, vendor_security_type
 from .scoring_v03 import SUBMETRICS, number
 from .v031 import _fetch_vendor
 
@@ -40,7 +40,7 @@ def checksum(raw):
     return sha256(raw).hexdigest()
 
 
-def freeze(discovery, target, cycle_id, shard_size, *, cutoff=None):
+def freeze(discovery, target, cycle_id, shard_size, *, cutoff=None, classification=None):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', cycle_id) or not 1 <= shard_size <= 250:
         raise ValueError('Invalid cycle ID or shard size (1–250)')
     cutoff = cutoff or utcnow().date()
@@ -63,8 +63,11 @@ def freeze(discovery, target, cycle_id, shard_size, *, cutoff=None):
         raise ValueError('Empty discovery cannot initialize a cycle')
     discovered = sorted(by_ticker.values(), key=lambda row: (row['market'], row['ticker']))
     eligible = defaultdict(list)
+    registry = load_registry(classification, cutoff)
     for row in discovered:
-        if row.get('security_type_status') not in INSTRUMENT_EXCLUSIONS:
+        reviewed = registry.get(row['ticker'], {})
+        if row.get('security_type_status') not in INSTRUMENT_EXCLUSIONS and not (
+                reviewed.get('reviewed') and reviewed['security_type'] in EXCLUDED):
             eligible[row['market']].append(row['ticker'])
     shards = {}
     for market, tickers in sorted(eligible.items()):
@@ -77,6 +80,7 @@ def freeze(discovery, target, cycle_id, shard_size, *, cutoff=None):
                                  if str(row.get('is_new_discovery', '')).lower() in {'true', '1'}})
     plan = dict(schema=SCHEMA, cycle_id=cycle_id, asof_date=str(cutoff), provider=PROVIDER,
                 expanded_discovery_markets=discovered_markets,
+                planning_classification_sha256=checksum(classification.read_bytes()) if classification else None,
                 provider_version=version(PROVIDER), universe_sha256=checksum(packed(listings)),
                 listings=listings, discovered=discovered, discovery_sources=logs.to_dict('records'), shards=shards)
     raw_plan = packed(plan)
@@ -162,6 +166,9 @@ def validate_checkpoint(db, tickers):
 def claim(db, now):
     with db:
         db.execute('BEGIN IMMEDIATE')
+        if db.execute("SELECT 1 FROM work WHERE status='BLOCKED_PROVIDER' AND retry_after>? LIMIT 1",
+                      (now.isoformat(),)).fetchone():
+            return None
         row = db.execute("""SELECT ticker, attempt_count FROM work WHERE
             (status='NOT_STARTED' OR (status IN ('IN_PROGRESS','BLOCKED_PROVIDER','RETRYABLE_FAILURE') AND retry_after<=?))
             ORDER BY attempt_count, ticker LIMIT 1""", (now.isoformat(),)).fetchone()
@@ -267,8 +274,11 @@ def summaries(plan, directory, now=None):
         pending = [row for row in rows.values() if row['status'] not in TERMINAL]
         runnable = [row for row in pending if row['status'] == 'NOT_STARTED' or
                     (row['retry_after'] and row['retry_after'] <= now.isoformat())]
+        blocked_until = max((row['retry_after'] for row in pending if row['status'] == 'BLOCKED_PROVIDER'
+                             and row['retry_after'] > now.isoformat()), default=None)
         shards[shard] = dict(market=spec['market'], scheduled=len(rows), pending=len(pending),
-                             runnable=len(runnable), calls_today=daily, statuses=dict(Counter(r['status'] for r in rows.values())))
+                             runnable=len(runnable), calls_today=daily, provider_blocked_until=blocked_until,
+                             statuses=dict(Counter(r['status'] for r in rows.values())))
     return shards, items
 
 
@@ -276,6 +286,8 @@ def dispatch(plan, directory, market, max_shards, job_budget, daily_budget, rese
     if not 1 <= max_shards <= 20 or not 1 <= job_budget <= 500 or not 1 <= daily_budget <= 10000:
         raise ValueError('Configure bounded dispatch and daily budgets')
     shards, _ = summaries(plan, directory)
+    if any(row['provider_blocked_until'] for row in shards.values()):
+        return []
     remaining = max(0, daily_budget - max(reserved, sum(row['calls_today'] for row in shards.values())))
     jobs = []
     for shard in sorted(shards, key=lambda name: (name.rsplit('-', 1)[1], name)):
@@ -325,7 +337,6 @@ def restore(plan, incoming, directory):
 def aggregate(plan, directory, output, universe, classification=None, evidence_options=()):
     """Apply the unchanged scoring and quality gates once to the restored batch union."""
     from .v06 import main as research_main
-    from .industry_classification import load_registry
     shards, items = summaries(plan, directory)
     output.mkdir(parents=True, exist_ok=False)
     manifest = output / '67_v06_run_manifest.json'
@@ -336,6 +347,9 @@ def aggregate(plan, directory, output, universe, classification=None, evidence_o
              'plan_sha256': plan['plan_sha256'], 'universe_sha256': plan['universe_sha256'],
              'provider': plan['provider'], 'provider_version': plan['provider_version'], 'shards': shards,
              'expanded_discovery_markets': plan['expanded_discovery_markets'],
+             'planning_classification_sha256': plan.get('planning_classification_sha256'),
+             'provider_blocked_until': max((row['provider_blocked_until'] for row in shards.values()
+                                            if row['provider_blocked_until']), default=None),
              'coverage_scope': 'FROZEN_DISCOVERY_ONLY', 'universe_census_verified': False,
              'trade_orders': 'NONE'}
     rows = []
@@ -357,7 +371,8 @@ def aggregate(plan, directory, output, universe, classification=None, evidence_o
     status = 'FULL_CYCLE_IN_PROGRESS' if any(row['pending'] for row in shards.values()) else (
         'PARTIAL_PROVIDER_FAILURE' if any(row['status'] in {'PERMANENT_FAILURE', 'SUCCESS_INCOMPLETE_DATA'}
                                           for row in coverage) else 'FULL_CYCLE_COMPLETE')
-    if status == 'FULL_CYCLE_COMPLETE' and set(plan['expanded_discovery_markets']) != set(MARKETS):
+    if state['provider_blocked_until'] or (
+            status == 'FULL_CYCLE_COMPLETE' and set(plan['expanded_discovery_markets']) != set(MARKETS)):
         status = 'BLOCKED_EXTERNAL_DEPENDENCY'
     state['run_status'] = status
     pd.DataFrame(coverage).to_csv(output / '68_cycle_security_status.csv', index=False)
@@ -438,7 +453,7 @@ def main():
         parser.add_argument('--' + flag, action='store_true')
     args = parser.parse_args()
     if args.mode == 'freeze':
-        freeze(args.input, args.plan, args.cycle_id, args.shard_size)
+        freeze(args.input, args.plan, args.cycle_id, args.shard_size, classification=args.classification)
         return
     plan = load_plan(args.plan)
     if args.mode == 'dispatch':
