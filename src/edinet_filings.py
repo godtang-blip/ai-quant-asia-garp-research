@@ -147,7 +147,8 @@ def parse_xbrl(raw, filing):
         if mapped is None:
             continue
         families, metric, statement = mapped
-        if taxonomy(qname.namespace) not in families.split():
+        family = taxonomy(qname.namespace)
+        if family not in families.split():
             continue
         context_id = fact.get('contextRef')
         instant = statement == 'BS'
@@ -178,6 +179,7 @@ def parse_xbrl(raw, filing):
         rows.append(dict(metric=metric, definition=qname.localname, statement=statement,
                          period_start=start, period_end=end, period_kind='INSTANT' if instant else 'FY',
                          scope='CONSOLIDATED', currency=currency, unit='CURRENCY', scale='1',
+                         accounting_standard='JP_GAAP' if family == 'jppfs' else 'IFRS', adjustment='UNADJUSTED',
                          value=str(value), parser_version='edinet-xbrl-2',
                          source_locator=f'{filename}:{fact.sourceline} {qname.localname}[{context_id}]'))
     counts = Counter(row['metric'] for row in rows)

@@ -57,6 +57,7 @@ def _fetch_vendor(ticker:str, *, session=None) -> dict:
         'market_cap':valid_number(info.get('marketCap')),
         'current_price':valid_number(info.get('currentPrice') or info.get('regularMarketPrice')),
         'forward_eps':valid_number(info.get('forwardEps')),
+        'trailing_eps':valid_number(info.get('trailingEps')),
         'currency':str(info.get('currency') or '').upper(),
         'financial_currency':str(info.get('financialCurrency') or '').upper(),
         'debt_to_equity_ratio':valid_number(info.get('debtToEquity')) / 100,

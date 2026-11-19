@@ -16,6 +16,7 @@ import pandas as pd
 
 from .discovery_review import candidate_review
 from .filing_evidence import SOURCES, read_export, reconcile
+from .financial_provenance import write_audit
 from .filing_preparation import prepare_inputs
 from .gemini_filing import DEFAULT_TIMEOUT_SECONDS, Gemini, plan, research
 from .industry_classification import load_registry
@@ -243,6 +244,8 @@ def produce_reports(output, ranked, stages, findings, limit):
             ranked.loc[ranked.ticker.eq(ticker), 'filing_status'] = 'BLOCKED'
     ranked['verified_export_issuer_key'] = ranked.ticker.map(issuer_ids)
     shortlist = ranked[stage.eq('MEMO_READY') & ranked.filing_status.ne('BLOCKED')].copy()
+    # Memo presentation is independent of the exploratory vendor ranking.
+    shortlist = shortlist.sort_values('ticker')
     approved_ids = shortlist.get('classification_issuer_id', pd.Series('', index=shortlist.index))
     dedup_key = ('ISSUER:' + approved_ids).where(approved_ids.ne(''), shortlist.verified_export_issuer_key)
     dedup_key = dedup_key.fillna('TICKER:' + shortlist.ticker)
@@ -261,12 +264,13 @@ def produce_reports(output, ranked, stages, findings, limit):
         ticker = candidate['ticker']
         lines.extend([f'## {ticker} {candidate["company"]}', '',
                       f'- 시장 및 동종 업종: {candidate["market"]} / {candidate["peer_group"]}',
-                      f'- 매출 및 이익 성장률: {candidate.get("revenue_growth", "")} / {candidate.get("earnings_growth", "")}',
-                      f'- 영업이익률: {candidate.get("operating_margin", "")}',
+                      f'- Forward PER 검토 상태 {candidate.get("forward_valuation_gate", "")}',
                       f'- 공시 검증: {candidate["filing_status"]}',
                       f'- Bear / Base / Bull: {candidate.get("intrinsic_bear")} / {candidate.get("intrinsic_base")} / {candidate.get("intrinsic_bull")}',
                       '- 성장 동력, 경쟁 우위 및 반증 조건: 검토 기록과 기존 리서치 메모 참조',
                       f'- 결론: {candidate["research_stage"]}', ''])
+        if candidate.get('reviewed_forward_per'):
+            lines.append(f'- 검토된 회사 전망 기준 Forward PER {float(candidate["reviewed_forward_per"]):.2f}배')
         for finding in by_ticker.get(ticker, []):
             if finding['status'] == 'MACHINE_RECONCILED':
                 lines.append(f'- {finding["metric"]}: {finding["source_locator"]} ({finding["source_url"]})')
@@ -289,6 +293,7 @@ def run(args):
     budget = FinancialBudget(args.checkpoint or output / '.financial.sqlite', args.asof_date,
                              args.financial_budget, args.delay_seconds)
     failed = pd.DataFrame()
+    evidence_directory = getattr(args, 'metric_evidence_dir', None) or args.universe.parent / 'financial_evidence'
     try:
         print('Discovery and financial screening', flush=True)
         frozen = None
@@ -311,6 +316,7 @@ def run(args):
                    args.discover_mode, args.fx_mode, 0, args.snapshot_csv, args.per_region,
                    args.evidence_mode, args.evidence_limit, args.asof_date, markets=args.markets,
                    fetch_vendor=budget, frozen_discovery=frozen, classification=registry,
+                   **({'metric_evidence_dir': evidence_directory} if evidence_directory.is_dir() else {}),
                    **({'campaign': True} if getattr(args, 'campaign_shortlist', False) else {}))
     except FundamentalsUnavailable as exc:
         failed = exc.attempts
@@ -362,6 +368,10 @@ def run(args):
         primary = [row for row in primary if row.get('ticker') in selected_tickers]
     vendor = read_export(args.vendor_export)
     audit = reconcile(primary, vendor, args.source_dir or output, args.asof_date, args.tolerance)
+    observed_at = datetime.now(timezone.utc).isoformat()
+    provenance = write_audit(output, ranked, evidence_directory, args.asof_date,
+                             [dict(row, collected_at=row.get('collected_at') or
+                                   (observed_at if row['acquisition'] == 'OFFICIAL_LIVE' else '')) for row in audit])
     pd.DataFrame(audit, columns=list(dict.fromkeys(
         ['ticker', 'venue', 'metric', 'status', 'reason'] + [key for row in audit for key in row]
     ))).to_csv(output / '62_numerical_reconciliation.csv', index=False)
@@ -473,6 +483,7 @@ def run(args):
             'research_report_error': report_error,
         },
         'verification_states': dict(Counter(row['status'] for row in audit)),
+        'financial_input_provenance': provenance,
         'vendor_requests': budget.requests, 'checkpoint_hits': budget.hits,
         'provider_versions': {'yfinance': version('yfinance')},
         'gemini': {key: value for key, value in gemini.items() if key not in {'companies', 'observations', 'qualitative_findings'}},
@@ -498,6 +509,8 @@ def main(argv=None):
     parser.add_argument('--snapshot-csv', type=Path)
     parser.add_argument('--frozen-cycle-plan', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--classification', type=Path)
+    parser.add_argument('--metric-evidence-dir', type=Path,
+                        help='Local publisher originals, signed reviews and metric definitions')
     parser.add_argument('--max-symbols', type=int, default=25)
     parser.add_argument('--full-universe', action='store_true')
     parser.add_argument('--financial-budget', type=int, default=25)
@@ -541,6 +554,9 @@ def main(argv=None):
     parser.add_argument('--max-requests', type=int, choices=range(1, 10), default=6)
     parser.add_argument('--report-limit', type=int, choices=range(1, 6), default=5)
     args = parser.parse_args(argv)
+    if args.metric_evidence_dir and (not args.metric_evidence_dir.is_dir() or
+            args.metric_evidence_dir.resolve().is_relative_to(args.output.resolve())):
+        parser.error('Metric evidence must be in an existing directory outside the output artifact')
     if not 25 <= args.gemini_timeout_seconds <= 180:
         parser.error('Gemini timeout must be 25–180 seconds')
     if args.prepare_filing_inputs and not args.research_dossier:

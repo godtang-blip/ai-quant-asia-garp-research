@@ -1,110 +1,62 @@
-# Asia GARP Research — Five-Market Equity Discovery
+# Asia GARP Research Engine
 
-An independent, human-directed project for finding Asian equities worth researching under a growth-at-a-reasonable-price framework. The pipeline covers discovery, financial screening, and evidence review across Korea, Japan, mainland China, Hong Kong, and Taiwan. Its output is a prioritized research queue. Investment conclusions remain with the researcher.
+아시아 상장기업의 데이터를 모아 GARP 기준으로 조사 우선순위를 만들고, 공식 공시와 사람이 검토할 근거를 묶는 AI 보조 리서치 프로젝트입니다. 한국, 일본, 중국 본토, 홍콩, 대만을 다룹니다. 최종 투자 논거, 밸류에이션 가정과 의사결정은 애널리스트가 책임집니다. [v0.6 통합 PR #4](https://github.com/godtang-blip/ai-quant-asia-garp-research/pull/4)
 
-## Verified Results and Current Limitations
+## 최근 Research-now 캠페인
 
-- **Completed financial-research run (earlier execution):** 5,098 securities analyzed, 4,800 scored, and 589 passed the initial research screen. This is not a financial analysis of the later, larger discovery universe.
-- **November 19, 2026 (KST), GitHub Actions discovery-only run #44370844839:** **16,629 unique security codes discovered** across the five markets. This live run collected listings only: no company fundamentals were fetched, no GARP scores were produced, and no investment performance was evaluated.
+사이클 `44456766424`의 완료 결과로 제공된 운영 집계입니다. 이번 변경에서는 원본 체크포인트를 다시 수집하거나 재실행하지 않았습니다. 작업 환경에서 Actions 아티팩트 다운로드가 차단되어 이 집계의 독립 재확인은 보류했습니다.
 
-| Market | Discovered security codes | Live listing evidence in run #44370844839 |
-|---|---:|---|
-| Korea | 2,592 | KIND: 825 KOSPI and 1,765 KOSDAQ listings; existing curated codes also retained |
-| Japan | 3,686 | JPX listing ingestion |
-| Mainland China | 5,579 | SSE: 1,700 Main Board + 619 STAR; QuantSonar: 1,494 SZSE Main Board + 1,410 ChiNext + 356 BSE |
-| Hong Kong | 2,781 | HKEX workbook ingestion (security codes, not unique issuers) |
-| Taiwan | 1,991 | TWSE: 1,093; TPEx: 898 |
-| **Total** | **16,629** | **No duplicate ticker codes in the combined discovery file** |
+| 단계 | 결과 |
+| --- | ---: |
+| 동결된 발견 종목 | 16,671 |
+| 누적 재무 공급자 호출 시도 | 500 |
+| 데이터가 충분해 점수화된 종목 | 439 |
+| 1차 정량 기준 통과 | 61 |
+| Research-now | 정상 완료 |
 
-The run's `11_discovery_universe.csv` and `12_discovery_sources_log.csv` provide per-code provenance and source outcomes; `49_china_board_coverage.csv` and `52_china_acquisition_acceptance.csv` separate the five mainland boards and live acceptance. The GitHub Actions job, regression tests, discovery-only step, and artifact upload completed successfully. This is a verified **listing-discovery milestone**, not a claim of complete exchange censuses, verified common-equity identity for every record, financial-data coverage, or investment returns.
+16,671은 고정된 발견 모집단입니다. 500은 재시도와 실패가 포함될 수 있는 호출 시도이며, 61은 후속 조사를 위한 통과 수입니다. 업종은 거래소·공급자 자료와 검토 기록의 범위에 따라 자동·잠정·미해결 상태로 나뉩니다. 누락되거나 비교하기 어려운 회계기간, 통화, 업종, 종목 유형은 각 감사 파일에 기록합니다. 현재 점수 체계의 미래 수익 예측력은 검증되지 않았습니다.
 
-**Source and completeness caveats:** SSE Main Board and STAR row counts reconciled with totals in their corresponding live publisher responses, but independently dated, scope-matched exchange-wide benchmarks are still needed. QuantSonar is a **third-party security master**, not official SZSE/BSE exchange verification: it returned 2,904 accepted Shenzhen listings and 356 BSE listings, with its provider-wide totals and effective data date unverified. The official SZSE and BSE routes continued to fail in this run; alternative acquisition succeeded. Other sources, including KRX, also have logged failures despite working alternative routes. Multiple share classes or trading counters can correspond to one company.
+기존 실행에서 NISSUI와 KYOKUYO의 EDINET XBRL 공시를 파싱한 관측이 보고됐습니다. Gemini는 승인 원문의 근거 문구를 구조화하며, 출처 확인, 숫자 대사, 실제 API 응답, 애널리스트 검토는 별도로 집계합니다. Gemini 라이브 연동은 선행 작업에서 확인됐으며 이번 작업에서 재실행하지 않았습니다. 시장 전체나 유키구니 전망치까지 검증됐다는 의미는 아닙니다. [공시·Gemini 운영 안내](docs/V06_RESEARCH_DOSSIER.md)
 
-**Remaining work:** Confirm listing completeness, security types, and provider dates against independent evidence; test financial-data availability for `.SZ` and `.BJ` instruments; reconcile source-derived financial figures to primary filings at scale; automate correction and reassessment of recoverable exclusions; and establish point-in-time, out-of-sample validation. Gemini filing research remains an **unmerged v0.5.2 feature branch**, not part of the active workflow. [China acquisition documentation](docs/CHINA_A_SHARE_DISCOVERY.md#single-run-acquisition-acceptance) · [Separate Gemini branch](https://github.com/godtang-blip/ai-quant-asia-garp-research/tree/codex/gemini-filing-research-v052)
+## 재무 신뢰성 사례 · Yukiguni Factory (1375.T)
 
-## Development Methodology — Human-Directed, AI-Assisted Engineering
+2026-11-19 공급자 스냅샷으로 제공된 주가 1,137엔, Forward EPS 158엔, Forward PER 7.1962배는 내부 산술상 일치합니다. 같은 주가를 제공된 FY2027 회사 전망 EPS 63.69엔으로 나누면 17.8521배입니다. 공급자 추정기간과 산정 정의가 미확인이므로 이 차이는 `PERIOD_MISMATCH_OR_UNRESOLVED`입니다. 별도 TTM EPS 97.76엔은 독립된 기간입니다.
 
-Early versions evolved through ChatGPT-assisted experimentation, Python and Google Colab prototypes, repeated runs, and GitHub Actions testing. On **November 18, 2026**, the project adopted a more structured Codex-assisted pull-request workflow. The first documented Codex PR milestone was **“Audit and improve five-market listing coverage,”** opened at **13:13 UTC** according to the project record and merged at **13:23 UTC**, as recorded in the repository's merge history. This milestone marks a change in development practice. AI assistance was already part of the earlier experimentation. [Colab prototype](notebooks/Run_Asia_GARP_Colab.ipynb) · [PR #1](https://github.com/godtang-blip/ai-quant-asia-garp-research/pull/1)
+공급자 원본과 기존 탐색 점수는 보존합니다. 문서와 날짜, EPS 및 가격의 주식 기준을 확인한 명시적 검토가 있어야 별도 재평가가 계산됩니다. IFRS 총수익과 제품 판매 매출은 정의를 분리합니다. 회사 정의 Core 영업이익은 비IFRS 조정 지표로 보관하며 일반 영업이익, 순이익, EPS의 대용값으로 사용하지 않습니다. [검증 결과와 감사 보고서](docs/V06_FINANCIAL_TRUST_AUDIT.md)
 
-| Responsibility | Contribution |
-|---|---|
-| **Human researcher and project owner** | Defined the five-market GARP objective, research questions, screening rules, and quality requirements. Reviewed actual Actions results, identified shortcomings, and prioritized changes. Retains responsibility for evidence interpretation, investment theses, valuations, and conclusions. |
-| **AI coding assistance** | Helped write and modify the screening and discovery software, debug exchange adapters and API responses, build tests and diagnostics, review code, and organize source-grounded filing tools. Codex tasks were directed by the project owner. |
-| **GitHub Actions** | Executes the defined workflow and produces run artifacts for inspection. Workflow dispatches provide repeatable observations under the runner's actual source-access conditions. |
+## 재현하기
 
-The Codex-assisted workflow remained human-directed through [PR #3](https://github.com/godtang-blip/ai-quant-asia-garp-research/pull/3), merged into `main` on **November 19, 2026 (KST)**. The documented progression is an early ChatGPT/Colab experimental phase followed by reviewable Codex/GitHub development; it is not a claim that all coding was autonomous or that every change used the same model.
-
-## Versioning and Development Milestones
-
-- **`v0.5.1` remains the current integrated research-engine and GitHub Actions workflow name.** Post-v0.5.1 listing discovery enhancements, including the successful five-market run, were merged through PR #3 without relabeling the engine or workflow.
-- **PR #3 (merged November 19, 2026 KST):** expanded exchange and third-party listing adapters, source/coverage diagnostics, guarded SZSE/BSE acquisition, and reproducible discovery-only checks. The 16,629-code result above is the subsequent live validation milestone.
-- **`v0.5.2` currently refers to the separate, unmerged Gemini primary-filing research branch.** It is not a released or integrated replacement for `v0.5.1`; an eventual version bump should follow integration and end-to-end verification.
-
-Development method (ChatGPT, Codex coding agents, and human review) is **distinct from software version numbering**. Version names identify the pipeline or feature line, not which AI model wrote the code.
-
-## Research Pipeline and Architecture
-
-1. **Discover listings.** Combine attributed exchange listings, dated publisher exports, and clearly labeled independent sources. Keep scope and source failures visible at market and venue level.
-2. **Screen financial data.** Separate discovered securities from those with usable financial observations, a score, and initial research eligibility. Scores rank investigation priority under explicit rules.
-3. **Review evidence and valuation.** Reconcile selected figures to primary filings, test valuation scenarios and counterevidence, and document the human research decision. [Evidence and valuation specification](docs/QUALITY_SPEC_V05.md)
-
-## Validation Philosophy and Quality Gates
-
-Observed failures shaped the design. Early semiconductor concentration exposed sector and sampling bias. Inconsistent currencies and reporting periods prompted data-quality checks. Early screens rejected too many unfamiliar companies, and uneven listing access gave an impression of country concentration. Exchange failures prompted evaluation of public and authenticated routes. High scores backed by unreliable data were quarantined. SSE live retrieval followed diagnosis of the request parameters and pagination, with accepted rows reconciled to publisher totals. [Five-market discovery milestone](docs/FIVE_MARKET_DISCOVERY_MILESTONE.md) · [SSE follow-up](docs/CHINA_A_SHARE_DISCOVERY.md#sse-pagination-follow-up)
-
-The validation layers answer different questions. Tests check software behavior. Live requests check whether a runner can access a source. Reconciliation checks data correctness and reporting scope. Screening gates determine research eligibility. Point-in-time, out-of-sample analysis would test investment performance. The project has not established alpha, realized returns, or investment recommendations.
-
-## Roadmap
-
-Broader, verifiable discovery across all five markets remains a priority. The following work can advance in parallel where inputs permit:
-
-- **Financial-data integrity.** Reconcile currencies, units, periods, and selected figures to primary filings.
-- **Candidate recovery.** Separate weak fundamentals from missing or unreliable data, obtain corrected inputs, and rerun unchanged screening rules. Eligible names can return to the research queue while investment theses remain subject to human approval. The current tool compares completed runs and preserves original decisions.
-- **Screening-model validity.** Measure sector and country bias, test sensitivity and stability, build point-in-time datasets with survivorship and look-ahead controls, and evaluate out-of-sample results against suitable benchmarks.
-- **Human-reviewed company research.** Examine the business model, growth drivers, competitive advantages, financial statements, valuation scenarios, catalysts, and counterevidence. Record falsification conditions and the final investment memorandum.
-
-## Reproduce the Workflow
-
-Open the [existing GitHub Actions workflow](https://github.com/godtang-blip/ai-quant-asia-garp-research/actions/workflows/run-research-v05.yml) and select the branch to run. Enable `discovery_only` to inspect listings without fetching fundamentals. Add `china_only` to focus on mainland sources and `china_provider_probe` for opt-in connection diagnostics. For a bounded financial run, use `discover_mode=all5_official` and `max_symbols=150` or smaller.
+Python 3.11을 사용합니다. 아래 검증과 사례 재현은 로컬에서 실행하며 공급자 키를 요구하지 않습니다.
 
 ```bash
-python -m pip install -r requirements.txt
-python -m pytest -q tests
-python -m src.discovery_smoke --output discovery-smoke
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt -r requirements-gemini.txt
+python -m pytest -q tests tests_gemini
+python -m src.financial_provenance case
 ```
 
-Review `11_discovery_universe.csv` and `12_discovery_sources_log.csv` for listings and source evidence, `38_market_coverage_audit.csv` for research-run coverage, and `47_venue_coverage.csv` for venue scope. The China acquisition report is `52_china_acquisition_acceptance.csv`. For a completed research run, `python -m src.discovery_review outputs review` creates exclusion diagnoses and can compare a completed rerun using `--reassessed-artifacts`.
+기존 캠페인의 최종 순위가 있으면 그 CSV에서 바로 재무 감사를 실행합니다. 예시 날짜는 보유한 아티팩트의 감사 기준일에 맞춥니다. 이 명령은 원순위를 보존하고 새 폴더에만 감사 결과를 기록합니다.
 
-Optional configuration includes `PUBLIC_DATA_API_KEY` for authorized KRX data, `DART_API_KEY` for OpenDART, `QUANTSONAR_API_KEY` for third-party mainland listing discovery, and `GARP_LISTING_EXPORT_DIR` for dated exchange files. `discovery_only` receives the configured QuantSonar secret; normal financial-research runs require the separate opt-in repository variable `GARP_ENABLE_QUANTSONAR_RESEARCH=1` to pass the same credential. Tushare requires entitled access or an authorized dated snapshot and retains its own explicit normal-run opt-in. Never commit or print credentials. [Export format and coverage checks](docs/FIVE_MARKET_COVERAGE.md) · [Provider and acceptance instructions](docs/CHINA_A_SHARE_DISCOVERY.md#single-run-acquisition-acceptance)
+```bash
+python -m src.financial_provenance audit-ranked \
+  --ranked /path/to/campaign/research/01_all_research_candidates.csv \
+  --asof-date 2026-11-19 \
+  --output outputs/checkpoint-audit
+```
 
-For SZSE and BSE, the listing-only workflow can additionally validate authorized dated snapshots from a private repository pinned to a commit. **Live third-party listing discovery from QuantSonar has now succeeded for both exchanges**, while direct official exchange routes remain unresolved. Optional representative Yahoo Finance diagnostics distinguish listing acquisition from financial-data availability. [Publisher downloads and private bundle fallback](docs/CHINA_A_SHARE_DISCOVERY.md#szse-and-bse-acquisition-handoff)
+입력 정의와 승인 기록을 재현하려면 감사 보고서의 `--metric-evidence-dir`을 사용합니다. 실제 수집이 필요한 Research-now의 시작과 재개는 기존 GitHub Actions 워크플로와 같은 사이클의 체크포인트로 진행합니다. 라이브 공시 및 Gemini에 필요한 키는 Repository Secrets에서 관리합니다. [캠페인 실행 안내](docs/V06_CAMPAIGN.md)
 
-## Version History — Problems Encountered, Why They Mattered, and What Changed
+## 구조와 주요 산출물
 
-This project did not begin as a finished investment model with known answers. It evolved by **documenting observed failures, sampling biases, and gaps in evidence verification**, then adjusting the research process in response. The figures and validation status below refer to the observations or implementations available at each release. Changes in scores or universe size **must not be interpreted as improved investment returns**.
+| 위치 | 역할 |
+| --- | --- |
+| `src/discovery_v031.py`, `src/research_cycle.py`, `src/research_campaign.py` | 5개 시장 목록 수집, 동결 계획, 체크포인트와 캠페인 재개 |
+| `src/v031.py`, `src/scoring_v03.py` | 재무 조사와 기존 GARP 점수·업종 기준 |
+| `src/filing_evidence.py`, `src/official_filings.py`, `src/gemini_filing.py` | 공식 원문과 대사, 승인된 공시 기반 AI 추출 |
+| `src/financial_provenance.py`, `src/research_quality.py` | 지표 출처·정의 분리, 산술과 기간 비교, 재평가와 최종 메모 게이트 |
+| `tests/`, `tests_gemini/` | 스크리닝, 체크포인트, 증거 및 Gemini 회귀 테스트 |
 
-| Version | What Was Implemented or Tested | Observed Problem and Rationale for the Next Version | Changes Introduced / Remaining Limitations |
-|---|---|---|---|
-| **v0.1 — Initial experiment** | Tested GARP-style screening on a small company set, combining growth and valuation metrics. | The candidates clustered in semiconductors, and some Yahoo Finance-derived financial metrics appeared unreliable. Standalone scores were insufficient for robust cross-company comparisons. | **v0.2** introduced industry peer groups and explicit data-quality warnings. |
-| **v0.2 — Peer-group expansion** | Expanded to a curated universe of 61 companies, with industry peer comparisons and financial-data warnings. | Potential mismatches in currencies and statement units for Hong Kong-listed issuers, together with uncertain fiscal periods and P/E inputs, could distort comparisons. | **v0.2.1** strengthened outlier quarantine and currency-related safeguards instead of assuming that every available number was comparable. |
-| **v0.2.1 — Anomaly quarantine** | Conservatively excluded or quarantined suspect indicators and documented unknown currencies or reporting periods. | A preselected universe could not systematically uncover unfamiliar companies. A common, defensible framework for prioritizing research across industries was also needed. | **v0.3** attempted broader automated discovery, industry-aware research-priority scoring, and FX/accounting-standard audits. |
-| **v0.3 — New-issuer discovery** | One observed run returned **416 companies**, including **355 newly discovered names**. Introduced 100-point, industry-sensitive screening and FX/accounting checks. | The sample was geographically unbalanced: **272 of 416 companies were Japanese**, versus **one mainland China company**. All **355 newly discovered companies** were excluded from the research shortlist under the then-current rules. Primary-filing numerical reconciliations had not been established. | **v0.3.1** added five-market discovery attempts, region-balanced sampling, provisional eligibility for new names, and source/counterevidence records. |
-| **v0.3.1 — Provenance and counterevidence** | Added discovery across Korea, Japan, mainland China, Hong Kong, and Taiwan; withheld EPS-based P/E when currency units were unclear; included news headlines, vendor financial extracts, a DART **filing index**, manual `REJECTED` decisions, and same-input weighting sensitivity checks. | The archived run reported **684 companies analyzed / 623 scored / 94 research candidates / 287 anomaly warnings**, but **zero financial figures reconciled against primary filings**. Even high-scoring candidates lacked the documented evidence and valuation work needed for an investment thesis. | **v0.5** connected financial-statement reconciliation, evidence stage gates, three valuation scenarios, opposing evidence, and research memoranda into one auditable pipeline. |
-| **v0.5 — Integrated three-stage workflow** | Joined five-market discovery, evidence collection/reconciliation, and valuation/memo preparation in **one GitHub Actions run**. Added public exchange-listing adapters, manual evidence attestation, counterevidence requirements, and falsification conditions. | A more rigorous process does **not** establish stronger future stock-selection accuracy. Direct verification of primary-filing figures and analyst-supplied assumptions are still necessary. | Re-applied the new gates to the **unchanged archived v0.3.1 results**: `SCREENED 94 / EVIDENCE_CHECKED 0 / VALUATION_REVIEWED 0 / MEMO_READY 0`. This demonstrates that **unsupported promotion was blocked**, not that returns improved. |
-| **v0.5.1 — Country-bias and evidence-quality audit** | The 2026-11-18 v0.5 run investigated **1,722 issuers / 240 screening-eligible**, but **1,121 (65.1%) were Taiwanese**. Japan JPX listing parsing failed; Korea official listing lacked an API key; mainland China and Hong Kong official listing adapters were not connected. A news item for Newborn Town referred to a different company. | Source failures and mismatched access can make five-market rankings appear more complete than they are. Broad `Electronic Components` classifications could also force unrelated issuers into an electrification peer group. | **v0.5.1** adds tolerant JPX Excel header detection (offline-tested; live publisher fetch still unverified), fail-visible five-market coverage and concentration audits, separate global/market research queues (not portfolio quotas), conservative component classification, headline issuer-match quarantine, and high-score rejection review. **No automatic China/HK issuer census, machine-parsed primary financials, or independently validated stock-picking edge** is claimed. |
+먼저 캠페인 아티팩트의 `74_campaign_manifest.json`에서 범위와 호출 수를 확인합니다. `research/01_all_research_candidates.csv`는 탐색용 원순위, `research/32_research_stage_gate.csv`는 메모 승인 조건, `research/80_*.csv`부터 `84_*.csv`까지는 출처·대사·별도 재평가입니다. `research/71_research_dossiers/`에서 후보별 근거를 검토합니다.
 
-### Discovery follow-up after PR #1
-
-- **Final post-PR #3 listing milestone (2026-11-19 KST):** a single five-market `discovery_only` Actions run (#44370844839) found 16,629 unique codes. QuantSonar live queries added 2,904 Shenzhen Main Board/ChiNext and 356 BSE listings; SSE, JPX, HKEX, KIND, TWSE and TPEx listing paths also succeeded. China discovery reached 5,579 codes. Provider metadata, independent complete-market reconciliation and downstream financial quality remain separate validation work.
-
-- An early completed financial run analyzed 5,098 securities, including 3,686 in Japan. JPX ingestion expanded Japanese coverage and made the remaining country gaps more visible.
-- A later Actions smoke test discovered 7,593 security codes. HKEX accepted 2,781 codes from a workbook of 17,355 rows. TPEx initially failed schema validation. A subsequent 8,489-code run confirmed live TPEx retrieval after the parser was updated.
-- An Actions run reached 11,052 codes, including 2,590 KIND listings, while mainland exchange routes were still failing. A subsequent listing-only run reported 11,051 codes and exposed SSE pagination validation errors. An intermediate 13,370-code discovery result followed the SSE request and pagination corrections.
-- Separate cloud probes hit access restrictions and did not validate new live China listings. The diagnostics distinguish blocked routes, SDK timeouts, provisional BaoStock inventory and authorized imports. [Discovery and source investigation record](docs/CHINA_A_SHARE_DISCOVERY.md)
-
-See the [changelog](CHANGELOG.md), [v0.5 retrospective audit](docs/V051_RETROSPECTIVE_AUDIT.md), and [archived v0.3.1 documentation](docs/README_v031_legacy.md) for the earlier runs and experiments.
-
-## v0.6 통합 리서치
-
-Python 3.11에서 `python -m src.v06 --help`로 5개 시장의 실행 범위, 재무 예산,
-공시 대조, 체크포인트 옵션을 확인할 수 있습니다. [운영 가이드](docs/V06_RESEARCH.md)
+AI 도구는 구현, 테스트와 원문 근거 정리를 보조했습니다. 공시의 해석, 회사 설명 검증, 투자 반증 검토와 공개 범위 승인은 사람이 맡습니다. 공급자 원본, 체크포인트, 키 및 검토자 개인정보의 재배포는 공개 전에 확인해야 합니다. [프로젝트 이력](CHANGELOG.md) · [제출 준비 감사](docs/V06_FINANCIAL_TRUST_AUDIT.md)

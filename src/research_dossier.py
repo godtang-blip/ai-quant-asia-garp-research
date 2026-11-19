@@ -103,7 +103,9 @@ def write_dossiers(output, selected, audit, gemini, manifest):
     names = ('02_research_shortlist.csv', '11_discovery_universe.csv', '12_discovery_sources_log.csv',
              '18_evidence_ledger.csv', '20_vendor_quarterly_earnings.csv', '30_primary_financial_reconciliation.csv',
              '31_valuation_scenario_audit.csv', '32_research_stage_gate.csv', '62_numerical_reconciliation.csv',
-             '63_gemini_evidence.json')
+             '63_gemini_evidence.json', '80_vendor_metric_provenance.csv', '81_official_metric_observations.csv',
+             '82_analyst_metric_reviews.csv', '83_financial_metric_comparison.csv',
+             '84_forward_valuation_reassessment.csv')
     hashes = {name: sha256((output / name).read_bytes()).hexdigest()
               for name in names if (output / name).is_file()}
     metrics = ['revenue_total_raw', 'free_cashflow_raw',
@@ -155,6 +157,8 @@ def write_dossiers(output, selected, audit, gemini, manifest):
                                          'quarters': records(output, '20_vendor_quarterly_earnings.csv', ticker)},
                    'official_attempts': attempts, 'filing_preparation': preparation, 'official_filing_leads': leads, 'primary_observations': filings,
                    'human_attested_inputs': records(output, '30_primary_financial_reconciliation.csv', ticker),
+                   'forward_valuation_review': next(iter(records(output, '84_forward_valuation_reassessment.csv', ticker)), {}),
+                   'forward_valuation_gate': stage.get('forward_valuation_gate', ''),
                    'evidence_ledger': ledger,
                    'gemini': {'execution': model_run, 'observations': model_findings, 'excerpts': excerpts},
                    'valuation': valuation, 'review_checklist': list(dict.fromkeys(blockers)),
@@ -194,6 +198,8 @@ def write_markdown(path, dossier):
              f'provider period {cell(dossier["historical_vendor"]["period_end"]) or "unknown"}. '
              f'{cell(dossier["historical_vendor"]["url"])}.']
     lines.extend(f'- {cell(metric)} · {cell(value)}' for metric, value in dossier['historical_vendor']['metrics'].items())
+    if dossier.get('forward_valuation_gate'):
+        lines.append(f'- Forward valuation gate {cell(dossier["forward_valuation_gate"])}.')
     lines.extend(['', '### Primary-source reconciliation'])
     for row in dossier['primary_observations']:
         lines.append(f'- {cell(row["metric"])} · {cell(row.get("value"))} {cell(row.get("currency"))}, '

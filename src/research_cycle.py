@@ -450,7 +450,7 @@ def main():
     # Only these options are forwarded. The input snapshot, market scope, and
     # report cutoff remain owned by the cycle.
     path_flags = ('official-filing-requests', 'opendart-requests', 'vendor-export', 'approved-sources',
-                  'source-dir', 'gemini-cache')
+                  'source-dir', 'gemini-cache', 'metric-evidence-dir')
     integer_flags = ('filing-budget', 'max-documents', 'max-requests', 'report-limit',
                      'gemini-total-input-budget', 'gemini-total-output-budget')
     decimal_flags = ('gemini-input-price', 'gemini-output-price', 'gemini-max-cost-usd')

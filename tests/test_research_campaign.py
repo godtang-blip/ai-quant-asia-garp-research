@@ -94,6 +94,10 @@ def test_restored_batch_two_waves_classify_aggregate_and_trigger_dossiers(tmp_pa
     assert audit.loc[audit.selected, 'operating_peer_group'].eq('chip_manufacturing').all()
     assert audit.loc[audit.selected, 'legacy_peer_group'].eq('chip_components').all()
     assert result['research_evidence']['gemini']['api_responses_received'] == 0
+    assert result['financial_input_provenance']['reassessed_tickers'] == 0
+    assert result['financial_input_provenance']['vendor_observations'] > 0
+    valuation = pd.read_csv(output / 'research/84_forward_valuation_reassessment.csv')
+    assert len(valuation) == 210 and valuation.rank_after.isna().all()
     assert sum(market['discovered'] for market in result['market_coverage'].values()) == 225
     expanded = campaign.prepare(
         plan, next_state, '914', 'abc', 'pr-branch', 'full-sweep', '913',

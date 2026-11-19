@@ -409,7 +409,8 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
     pd.DataFrame([dict(ticker=ticker, issuer_id=EDINET['issuer_id'], metric='revenue', definition='NetSales',
                        period_start=EDINET['period_start'], period_end=EDINET['period_end'], period_kind='FY',
                        scope='CONSOLIDATED', statement='IS', currency='JPY', unit='CURRENCY', value='1000000',
-                       scale='1', publication_date=EDINET['publication_date'])]).to_csv(comparable, index=False)
+                       scale='1', publication_date=EDINET['publication_date'],
+                       accounting_standard='JP_GAAP', adjustment='UNADJUSTED')]).to_csv(comparable, index=False)
     monkeypatch.setattr('sys.argv', ['research_cycle', 'aggregate', '--plan', str(frozen), '--state', str(restored),
         '--output', str(out), '--universe', str(universe), '--vendor-export', str(comparable),
         '--research-dossier', '--prepare-filing-inputs', '--filing-budget', '1', '--report-limit', '1',

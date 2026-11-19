@@ -556,6 +556,7 @@ def publish_report(plan, state, lease, progress, output, private, universe, *, n
                     evidence_run_id=evidence_run, screening_thresholds={'minimum_metric_coverage': .70,
                     'profitable_operating_margin_and_roe': True, 'known_peer_group': True, 'clean_screening_flags': True},
                     research_evidence=retained_evidence,
+                    financial_input_provenance=evidence.get('financial_input_provenance', {}),
                     evidence_uncertain=lease['evidence_uncertain'],
                     blocked_uncertain_provider_attempts=uncertain,
                     human_responsibility='Final thesis, valuation assumptions and investment conclusions')

@@ -86,6 +86,10 @@ def validate_source(row, source_dir):
     if (not is_public_https(row['source_url']) or
             not any(url.hostname == host or (url.hostname or '').endswith('.' + host) for host in hosts)):
         raise ValueError('UNRECOGNIZED_PRIMARY_SOURCE')
+    validate_original(row, source_dir)
+
+
+def validate_original(row, source_dir):
     digest = row['source_sha256']
     if len(digest) != 64 or set(digest) - set('0123456789abcdef'):
         raise ValueError('INVALID_SOURCE_CHECKSUM')
@@ -130,6 +134,11 @@ def reconcile(primary, vendor, source_dir, cutoff, tolerance=Decimal('0.02')):
             result.update(status='BLOCKED', reason='AMBIGUOUS_VENDOR_OBSERVATION')
             continue
         comparison = matches[0]
+        context = ('accounting_standard', 'adjustment')
+        if any((row.get(field) or comparison.fields.get(field)) and
+               row.get(field) != comparison.fields.get(field) for field in context):
+            result['reason'] = 'ACCOUNTING_OR_ADJUSTMENT_MISMATCH_OR_UNRESOLVED'
+            continue
         difference = abs(observation.normalized - comparison.normalized)
         denominator = abs(observation.normalized)
         relative = difference / denominator if denominator else (Decimal(0) if not difference else None)
