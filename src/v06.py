@@ -12,10 +12,12 @@ import subprocess
 import time
 
 import pandas as pd
+import requests
 
 from .discovery_review import candidate_review
 from .filing_evidence import SOURCES, read_export, reconcile
 from .gemini_filing import Gemini, plan, research
+from .opendart_statements import fetch_statement
 from .v031 import FundamentalsUnavailable, _fetch_vendor
 from .v051 import run as run_legacy
 
@@ -99,6 +101,33 @@ def gemini_report(args):
             'estimated_cost_usd': None}
 
 
+def acquisition(args):
+    documents = read_export(args.opendart_requests)
+    key = os.environ.get('DART_API_KEY', '').strip()
+    rows, attempts = [], []
+    with requests.Session() as session:
+        for index, document in enumerate(documents):
+            attempt = {'ticker': document.get('ticker', ''), 'status': 'NOT_TESTED'}
+            attempts.append(attempt)
+            if not key:
+                attempt['reason'] = 'DART_API_KEY_MISSING'
+                continue
+            if index >= args.filing_budget:
+                attempt['reason'] = 'FILING_BUDGET_EXHAUSTED'
+                continue
+            if index:
+                time.sleep(args.delay_seconds)
+            try:
+                extracted = fetch_statement(session, document, key, args.asof_date, args.source_dir)
+            except (ValueError, KeyError, OSError, requests.RequestException) as exc:
+                attempt.update(status='FAILED', reason=type(exc).__name__)
+                continue
+            rows.extend(extracted)
+            attempt.update(status='RETRIEVED' if extracted else 'NO_MAPPED_STATEMENT_ROWS',
+                           observations=len(extracted))
+    return rows, attempts
+
+
 def produce_reports(output, ranked, stages, findings, limit):
     if ranked.empty:
         ranked = pd.DataFrame(columns=['ticker', 'company', 'market'])
@@ -175,7 +204,8 @@ def run(args):
     universe = read_table(output, '11_discovery_universe.csv')
     logs = read_table(output, '12_discovery_sources_log.csv')
     print('Primary filing import and deterministic reconciliation', flush=True)
-    primary = read_export(args.primary_export)
+    live_primary, filing_attempts = acquisition(args)
+    primary = read_export(args.primary_export) + live_primary
     vendor = read_export(args.vendor_export)
     audit = reconcile(primary, vendor, args.source_dir or output, args.asof_date, args.tolerance)
     pd.DataFrame(audit, columns=list(dict.fromkeys(
@@ -183,8 +213,9 @@ def run(args):
     ))).to_csv(output / '62_numerical_reconciliation.csv', index=False)
     registry = [{'venue': venue, 'market': market, 'publisher': publisher,
                  'access': 'AUTHORIZED_NORMALIZED_EXPORT',
-                 'status': 'EXPORT_SUPPLIED' if any(row.get('venue') == venue for row in primary)
-                 else 'NOT_CONFIGURED'}
+                 'status': 'LIVE_OBSERVATIONS' if venue == 'KRX' and live_primary else
+                 'EXPORT_SUPPLIED' if any(row.get('venue') == venue for row in primary) else
+                 'LIVE_ATTEMPTED_SEE_MANIFEST' if venue == 'KRX' and filing_attempts else 'NOT_CONFIGURED'}
                 for venue, (market, publisher, _) in SOURCES.items()]
     pd.DataFrame(registry).to_csv(output / '61_primary_source_registry.csv', index=False)
     coverage = []
@@ -238,6 +269,7 @@ def run(args):
         'coverage': coverage,
         'failed_fetch_reasons': dict(Counter(value for value in (failed if ranked.empty else ranked)
                                              .get('fetch_error', []) if value)), 'discovery_sources': logs.to_dict('records'),
+        'filing_attempts': filing_attempts,
         'verification_states': dict(Counter(row['status'] for row in audit)),
         'vendor_requests': budget.requests, 'checkpoint_hits': budget.hits,
         'provider_versions': {'yfinance': version('yfinance')},
@@ -266,6 +298,8 @@ def main():
     parser.add_argument('--delay-seconds', type=float, default=1)
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--asof-date', type=date.fromisoformat, default=datetime.now(timezone.utc).date())
+    parser.add_argument('--opendart-requests', type=Path)
+    parser.add_argument('--filing-budget', type=int, choices=range(11), default=0)
     parser.add_argument('--primary-export', type=Path)
     parser.add_argument('--vendor-export', type=Path)
     parser.add_argument('--source-dir', type=Path)
@@ -287,6 +321,8 @@ def main():
         parser.error('Historical dates require a dated vendor snapshot. Future dates are invalid.')
     if not 1 <= args.gemini_input_bytes <= 24000 or not 1 <= args.gemini_output_tokens <= 1024:
         parser.error("Gemini caps are 24000 input bytes and 1024 output tokens per request")
+    if args.opendart_requests and (not args.source_dir or args.source_dir.resolve().is_relative_to(args.output.resolve())):
+        parser.error('Live filing acquisition requires a private --source-dir outside --output')
     run(args)
 
 

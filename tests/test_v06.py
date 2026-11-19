@@ -108,3 +108,21 @@ def test_five_market_cli_snapshot(monkeypatch, tmp_path):
     assert manifest['trade_orders'] == 'NONE'
     assert manifest['shortlisted'] == 0
     assert '검토를 완료한 후보가 없습니다' in (output / '66_candidate_briefs.md').read_text()
+
+
+def test_opendart_normalization_checks_receipt_and_period():
+    from src.opendart_statements import normalize_statement
+
+    document = {'ticker': '005930.KS', 'issuer_id': '12345678', 'issuer_name': 'Synthetic company',
+                'receipt_number': '20260331000001', 'publication_date': '2026-03-31',
+                'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+    account = {'rcept_no': document['receipt_number'], 'corp_code': document['issuer_id'],
+               'bsns_year': '2025', 'reprt_code': '11011', 'sj_div': 'BS',
+               'account_id': 'ifrs-full_Assets', 'thstrm_amount': '5,000', 'currency': 'KRW'}
+    row, = normalize_statement({'status': '000', 'list': [account]}, document, 'a' * 64, CUTOFF)
+    assert row['period_start'] == row['period_end'] == '2025-12-31'
+    assert row['period_kind'] == 'INSTANT'
+    assert row['value'] == '5000'
+    account['rcept_no'] = '20260401000001'
+    with pytest.raises(ValueError, match='RECEIPT_OR_ISSUER_MISMATCH'):
+        normalize_statement({'status': '000', 'list': [account]}, document, 'a' * 64, CUTOFF)
