@@ -39,7 +39,11 @@ def test_official_snapshot_replay_uses_exact_hash_and_does_not_count_as_live(tmp
     assert item['acquisition'] == 'OFFICIAL_REPLAY'
     assert attempts[0]['status'] == 'REPLAY_PARSED' and not attempts[0]['attempted']
     comparable = dict(item, value='1490')
-    assert reconcile(rows, [comparable], raw, cutoff)[0]['status'] == 'MACHINE_RECONCILED'
+    pending = reconcile(rows, [], raw, cutoff)[0]
+    assert (pending['evidence_state'], pending['human_review_status']) == ('SOURCE_TEXT_MATCHED', 'NOT_REVIEWED')
+    matched = reconcile(rows, [comparable], raw, cutoff)[0]
+    assert (matched['status'], matched['evidence_state'], matched['human_review_status']) == (
+        'MACHINE_RECONCILED', 'MACHINE_RECONCILED', 'NOT_REVIEWED')
     (permissions / digest).write_bytes(b'changed')
     rows, attempts = acquire_sources(notes, None, raw, cutoff, 1, 0, {}, replay_dir=permissions)
     assert not rows and attempts[0]['reason'] == 'REPLAY_ORIGINAL_CHECKSUM_MISMATCH'

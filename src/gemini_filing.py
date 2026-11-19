@@ -642,6 +642,8 @@ def research(selected: list[str], filings: dict[str, Filing], agent: Gemini | No
                                      document_date=filing.document_date,
                                      document_date_source=filing.document_date_source,
                                      document_sha256=digest, accessed_at_utc=entry['accessed_at_utc'],
+                                     evidence_state='SOURCE_TEXT_MATCHED'
+                                     if checked['verification_status'] == 'SOURCE_TEXT_MATCH' else 'UNVERIFIED',
                                      analyst_review_status='NOT_REVIEWED', filing_verified=False))
             report['observations'].extend(accepted)
             entry.update(status='EXTRACTED' if accepted else 'NO_SUPPORTED_OBSERVATIONS',

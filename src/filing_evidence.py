@@ -110,6 +110,7 @@ def reconcile(primary, vendor, source_dir, cutoff, tolerance=Decimal('0.02')):
     audit = []
     for row in primary:
         result = {**row, 'status': 'UNVERIFIED', 'reason': '',
+                  'evidence_state': 'UNVERIFIED', 'human_review_status': 'NOT_REVIEWED',
                   'normalization': 'REPORTED_VALUE_TIMES_DECLARED_SCALE'}
         audit.append(result)
         try:
@@ -119,6 +120,8 @@ def reconcile(primary, vendor, source_dir, cutoff, tolerance=Decimal('0.02')):
             result.update(status='BLOCKED', reason=str(exc) if isinstance(exc, ValueError) else type(exc).__name__)
             continue
         result['primary_normalized'] = str(observation.normalized)
+        if row.get('acquisition') in {'OFFICIAL_LIVE', 'OFFICIAL_REPLAY'}:
+            result['evidence_state'] = 'SOURCE_TEXT_MATCHED'
         matches = vendor_index.get(observation.key, [])
         if not matches:
             result['reason'] = 'NO_COMPARABLE_VENDOR_OBSERVATION'
@@ -145,6 +148,9 @@ def reconcile(primary, vendor, source_dir, cutoff, tolerance=Decimal('0.02')):
         if len(group) > 1:
             for row in group:
                 row.update(status='BLOCKED', reason='DUPLICATE_OR_RESTATED_PRIMARY')
+    for row in audit:
+        if row['status'] in {'BLOCKED', 'MACHINE_RECONCILED'}:
+            row['evidence_state'] = row['status']
     return audit
 
 
