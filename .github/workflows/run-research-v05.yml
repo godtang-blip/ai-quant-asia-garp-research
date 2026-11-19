@@ -530,7 +530,9 @@ jobs:
           GARP_FILING_BUDGET: ${{ inputs.filing_budget }}
           GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
           DART_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && secrets.DART_API_KEY || '' }}
-          EDINET_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && inputs.official_filing_requests != '' && secrets.EDINET_API_KEY || '' }}
+          EDINET_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && (vars.GARP_RESEARCH_DOSSIER == '1' || inputs.official_filing_requests != '') && secrets.EDINET_API_KEY || '' }}
+          GARP_EDINET_INDEX_DATES: ${{ vars.GARP_EDINET_INDEX_DATES }}
+          GARP_REPORT_LIMIT: ${{ inputs.report_limit }}
           GEMINI_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && inputs.enable_gemini && secrets.GEMINI_API_KEY || '' }}
         run: |
           mkdir -p fresh-shards
@@ -549,7 +551,7 @@ jobs:
             esac
           done
           extra+=(--source-dir "$RUNNER_TEMP/garp-cycle-originals" --filing-budget "$GARP_FILING_BUDGET")
-          if [[ "$GARP_DOSSIER" == 1 ]]; then extra+=(--research-dossier); fi
+          if [[ "$GARP_DOSSIER" == 1 ]]; then extra+=(--research-dossier --prepare-filing-inputs --report-limit "$GARP_REPORT_LIMIT"); fi
           if [[ "$GARP_ENABLE_MODEL" == true ]]; then
             [[ -z "$GARP_GEMINI_MAX_COST" ]] || extra+=(--gemini-max-cost-usd "$GARP_GEMINI_MAX_COST")
             [[ -z "$GARP_GEMINI_INPUT_PRICE" ]] || extra+=(--gemini-input-price "$GARP_GEMINI_INPUT_PRICE")

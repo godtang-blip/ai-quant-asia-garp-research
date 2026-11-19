@@ -428,6 +428,20 @@ class Gemini:
         self.max_cost_usd = max_cost_usd
         self.dossier = dossier
 
+    def check_model(self):
+        from google.genai.errors import APIError
+        from httpx import TransportError
+
+        try:
+            info = self.client.models.get(model=self.model)
+        except APIError as exc:
+            return f'GEMINI_MODEL_METADATA_HTTP_{exc.code}'
+        except TransportError as exc:
+            return f'GEMINI_MODEL_METADATA_{type(exc).__name__}'
+        if 'generateContent' not in (info.supported_actions or []):
+            return 'GEMINI_GENERATE_CONTENT_NOT_ADVERTISED'
+        return 'MODEL_SUPPORTS_GENERATE_CONTENT'
+
     @property
     def estimated_cost(self):
         if self.input_price is None or self.output_price is None:

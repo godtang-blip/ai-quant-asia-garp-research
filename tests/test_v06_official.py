@@ -269,3 +269,102 @@ def test_blank_current_html_cell_cannot_turn_note_into_amount():
     <tr><td>Revenue</td><td>12</td><td></td><td>1300</td></tr></table>'''
     filing = FilingRequest.from_row(schedule('HKEX', '00001.HK', 'www1.hkexnews.hk'), CUTOFF)
     assert parse_statement(raw, 'text/html', filing) == []
+
+
+def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from google import genai
+
+    from src import research_cycle as cycle
+    from src.scoring_v03 import SUBMETRICS
+
+    ticker = EDINET['ticker']
+    discovery = tmp_path / 'discovery'
+    discovery.mkdir()
+    universe = Path('data/universe.csv')
+    ranked_origin = pd.read_csv(universe).loc[lambda rows: rows.ticker.eq(ticker)]
+    ranked_origin.assign(is_new_discovery=False, discovery_source='CURATED_TICKER',
+                         security_type_status='CURATED_TICKER_TYPE_NEEDS_CONFIRMATION').to_csv(
+        discovery / '11_discovery_universe.csv', index=False)
+    pd.DataFrame([dict(source='fixture', status='OK', market='Japan', source_kind='TEST_FIXTURE')]).to_csv(
+        discovery / '12_discovery_sources_log.csv', index=False)
+    frozen = tmp_path / 'plan'
+    cycle.freeze(discovery, frozen, 'fixture', 5, cutoff=CUTOFF)
+    plan = cycle.load_plan(frozen)
+    shard = next(iter(plan['shards']))
+    checkpoint = tmp_path / 'checkpoint'
+    cycle.run_shard(plan, shard, checkpoint, 1, 0, clock=lambda: datetime(2026, 11, 1, tzinfo=timezone.utc),
+                    fetch=lambda _: {**dict.fromkeys((f for group in SUBMETRICS.values() for f in group), .15),
+                                     'vendor_quote_type': 'EQUITY', 'forward_pe': 15, 'price_to_sales': 2,
+                                     'currency': 'JPY', 'financial_currency': 'JPY'})
+    restored = tmp_path / 'restored'
+    cycle.restore(plan, checkpoint, restored)
+
+    item = dict(docID=EDINET['document_id'], edinetCode=EDINET['issuer_id'], secCode='72030', docTypeCode='120',
+                filerName='Example Issuer Holdings', xbrlFlag='1', pdfFlag='1', periodStart=EDINET['period_start'],
+                periodEnd=EDINET['period_end'], submitDateTime='2025-06-18 13:00',
+                withdrawalStatus='0', disclosureStatus='0')
+    pdf = Path('tests/fixtures/v06-public-statement.pdf').read_bytes()
+    def publisher(session, url, *, params, **kwargs):
+        assert params['Subscription-Key'] == 'fixture-edinet'
+        if url.endswith('.json'):
+            return json.dumps({'metadata': {'status': '200'}, 'results': [item]}).encode(), 'application/json'
+        if params['type'] == '1':
+            return xbrl_archive(), 'application/zip'
+        assert params['type'] == '2'
+        return pdf, 'application/pdf'
+
+    monkeypatch.setattr('src.official_filings.download', publisher)
+    monkeypatch.setattr('src.filing_preparation.download', publisher)
+    cover = 'Example Issuer Holdings\n有価証券報告書\n【事業年度】2024年4月1日 2025年3月31日'
+    monkeypatch.setattr('src.filing_preparation.PdfReader',
+                        lambda _: SimpleNamespace(pages=[SimpleNamespace(extract_text=lambda: cover)]))
+    monkeypatch.setattr('src.gemini_filing.retrieve', lambda *_: pytest.fail('Private original should be reused'))
+    calls = []
+    def response(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return SimpleNamespace(function_calls=[SimpleNamespace(name='read_passage', args={'id': 0})])
+        return SimpleNamespace(text='{"observations":[],"excerpts":[]}')
+    models = SimpleNamespace(generate_content=response, get=lambda **kwargs: SimpleNamespace(
+        supported_actions=['generateContent']))
+    monkeypatch.setattr(genai, 'Client', lambda **kwargs: SimpleNamespace(models=models))
+    monkeypatch.setenv('EDINET_API_KEY', 'fixture-edinet')
+    monkeypatch.setenv('GEMINI_API_KEY', 'fixture-model')
+    monkeypatch.setenv('GARP_EDINET_INDEX_DATES', '2025-06-18')
+    out = tmp_path / 'aggregate'
+    comparable = tmp_path / 'vendor.csv'
+    pd.DataFrame([dict(ticker=ticker, issuer_id=EDINET['issuer_id'], metric='revenue', definition='NetSales',
+                       period_start=EDINET['period_start'], period_end=EDINET['period_end'], period_kind='FY',
+                       scope='CONSOLIDATED', statement='IS', currency='JPY', unit='CURRENCY', value='1000000',
+                       scale='1', publication_date=EDINET['publication_date'])]).to_csv(comparable, index=False)
+    monkeypatch.setattr('sys.argv', ['research_cycle', 'aggregate', '--plan', str(frozen), '--state', str(restored),
+        '--output', str(out), '--universe', str(universe), '--vendor-export', str(comparable),
+        '--research-dossier', '--prepare-filing-inputs', '--filing-budget', '1', '--report-limit', '1',
+        '--source-dir', str(tmp_path / 'private'), '--enable-gemini', '--max-requests', '2',
+        '--gemini-max-cost-usd', '.05', '--gemini-input-price', '1', '--gemini-output-price', '2'])
+    cycle.main()
+    evidence = out / 'research'
+    prepared = evidence / '72_filing_preparation'
+    lead, = json.loads((prepared / 'review.json').read_text())['outcomes']
+    assert lead['status'] == 'AUTO_VERIFIED_OFFICIAL_ORIGINAL'
+    approval = pd.read_csv(prepared / 'gemini_approved_sources.csv').iloc[0]
+    assert approval.ticker == ticker and approval.source_url.endswith('?type=2')
+    assert 'fixture-edinet' not in (prepared / 'gemini_approved_sources.csv').read_text()
+    assert approval.expected_sha256 == sha256(pdf).hexdigest()
+    assert pd.read_csv(prepared / 'official_filing_requests.csv').source_url.iat[0].endswith('?type=1')
+    manifest = json.loads((evidence / '67_v06_run_manifest.json').read_text())
+    assert manifest['vendor_requests'] == 0 and manifest['filing_attempts'][0]['document_retrieved']
+    assert manifest['verification_states'] == {'MACHINE_RECONCILED': 1}
+    assert manifest['gemini']['model_preflight'] == 'MODEL_SUPPORTS_GENERATE_CONTENT'
+    assert manifest['gemini']['api_responses_received'] == len(calls) == 2
+    assert manifest['research_dossiers']['dossiers'][0]['ticker'] == ticker
+
+
+def test_edinet_pdf_without_verified_annual_period_requires_review():
+    from src.filing_preparation import verify_pdf
+
+    with pytest.raises(SourceUnavailable, match='GEMINI_PDF_ISSUER_NEEDS_REVIEW'):
+        verify_pdf(Path('tests/fixtures/v06-public-statement.pdf').read_bytes(), EDINET)

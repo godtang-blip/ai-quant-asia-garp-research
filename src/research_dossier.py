@@ -90,6 +90,8 @@ def write_dossiers(output, selected, audit, gemini, manifest):
         valuation_inputs, valuation = valuation_workspace(output, ticker, manifest['asof_date'])
         inputs.append(valuation_inputs)
         attempts = [row for row in manifest['filing_attempts'] if row['ticker'] == ticker]
+        preparation = next((row for row in manifest.get('filing_preparation', {}).get('outcomes', [])
+                            if row['ticker'] == ticker), {})
         leads = [row for row in manifest['official_filing_leads'] if row['ticker'] == ticker]
         filings = [row for row in audit if row['ticker'] == ticker]
         ledger = records(output, '18_evidence_ledger.csv', ticker)
@@ -97,7 +99,9 @@ def write_dossiers(output, selected, audit, gemini, manifest):
         model_findings = [row for row in gemini.get('observations', []) if row['ticker'] == ticker]
         excerpts = [row for row in gemini.get('qualitative_findings', []) if row['ticker'] == ticker]
         blockers = [reason for reason in stage.get('blocking_reasons', '').split('|') if reason]
-        if not attempts:
+        if preparation.get('reason'):
+            blockers.append('FILING PREPARATION: ' + preparation['reason'])
+        if not attempts and not preparation:
             blockers.append('PRIMARY_FILING_REQUEST_REQUIRED: confirm legal issuer, annual period and official source')
         blockers.extend(item['reason'] for item in attempts + leads if item.get('reason'))
         if not any(row['status'] == 'MACHINE_RECONCILED' for row in filings):
@@ -124,7 +128,7 @@ def write_dossiers(output, selected, audit, gemini, manifest):
                                          'period_end': candidate.get('provider_financial_period_end', ''),
                                          'metrics': {field: candidate[field] for field in metrics if candidate.get(field)},
                                          'quarters': records(output, '20_vendor_quarterly_earnings.csv', ticker)},
-                   'official_attempts': attempts, 'official_filing_leads': leads, 'primary_observations': filings,
+                   'official_attempts': attempts, 'filing_preparation': preparation, 'official_filing_leads': leads, 'primary_observations': filings,
                    'human_attested_inputs': records(output, '30_primary_financial_reconciliation.csv', ticker),
                    'evidence_ledger': ledger,
                    'gemini': {'execution': model_run, 'observations': model_findings, 'excerpts': excerpts},

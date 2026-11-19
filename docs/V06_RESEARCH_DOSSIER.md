@@ -1,35 +1,43 @@
-# v0.6 Research Dossier
+# Research Dossier from restored cycle 44456766424
 
-Dossier mode derives candidates in order from the existing issuer-deduplicated screening shortlist, 02_research_shortlist.csv. It schedules primary filing requests only for those candidates and applies the existing filing and model budgets. It does not select an outside candidate when the shortlist is empty or when an approved filing is unavailable. The output directory 71_research_dossiers contains a Markdown and JSON packet per candidate, an execution index, and an analyst-editable valuation input CSV. A blocked run writes the index and CSV without inventing a company.
+Use the existing research workflow on the PR #4 branch. Start one Aggregate run. The workflow restores the plan and durable financial state for cycle 44456766424. It uses the existing GARP shortlist and keeps its ordering and eligibility. It performs no financial-provider batch calls. Do not dispatch Initialize or Batch for this procedure.
 
-## First bounded Actions run
+## GitHub Actions dispatch
 
-Set repository variable GARP_RESEARCH_DOSSIER to 1. Use the existing run-research-v05 workflow on the PR branch with these dispatch values.
+Set repository variables GARP_ALLOW_FINANCIAL_CHECKPOINT_ARTIFACTS=1 and GARP_RESEARCH_DOSSIER=1. Keep any GARP_CLASSIFICATION_REGISTRY setting used for the original ranking.
 
 | Input | Value |
 |---|---|
-| cycle_mode, cycle_market | off, All |
-| discovery_only, legacy_research, full_universe | false, false, false |
-| discover_mode, per_region | all5_official, 90 |
-| max_symbols, financial_budget, report_limit | 25, 50, 1 |
-| evidence_mode, fx_mode | off, off |
-| filing_budget | 1 |
+| cycle_mode | aggregate |
+| cycle_state | 44456766424 |
+| cycle_market | All |
+| report_limit, filing_budget | 5, 5 |
 | enable_gemini, gemini_approved_only | true, false |
 | gemini_max_documents, gemini_max_requests | 1, 2 |
-| official_filing_requests, gemini_approved_sources | Paths to reviewed CSVs within the branch checkout |
-| research_asof | Leave blank for current UTC data |
+| official_filing_requests, gemini_approved_sources | **Leave both blank** |
+| full_universe, discovery_only, legacy_research | false, false, false |
+| research_asof | Leave blank. Aggregate uses restored checkpoints and the report cutoff. |
+| Other dispatch controls | Defaults; candidate finances come from restored state |
 
-Set GEMINI_API_KEY before a model call. Set DART_API_KEY for Korean issuer resolution and OpenDART requests; set EDINET_API_KEY for EDINET requests. Configure GARP_GEMINI_MODEL to an available model, GARP_GEMINI_MAX_COST_USD to the approved positive spend reservation, and GARP_GEMINI_INPUT_PRICE and GARP_GEMINI_OUTPUT_PRICE to the confirmed USD per million tokens for that model. Optionally lower GARP_GEMINI_TOTAL_INPUT_BUDGET and GARP_GEMINI_TOTAL_OUTPUT_BUDGET. The reservation uses input bytes plus serialized schema and the maximum response length. Estimated cost uses reported API token usage. A request is withheld when its estimated input or reserved output would exceed the configured limits. The filing content and model request counts are independently bounded.
+The single run handles restore, shortlist, filing preparation, filing acquisition, numerical checks, Gemini, and dossiers. A candidate with verified original content can use the Gemini document budget even if a higher-ranked candidate is blocked. This affects evidence collection only. The dossier records the original shortlist position.
 
-Supply one request for the highest-ranked eligible issuer. If the result is unknown, first run the same workflow with the approval paths blank and Gemini disabled. Review the emitted shortlist and then rerun with the same controls and approved files. If ranking changes, the new shortlist still governs. A historical replay with an authorized timestamped provider snapshot can reproduce an earlier selection but cannot substitute for a live canary.
+## Required secrets and cost settings
 
-## Approved inputs
+In repository Settings → Secrets and variables → Actions, add **GEMINI_API_KEY** for the Google Gemini Developer API. Add **EDINET_API_KEY** for EDINET API v2 and optionally **DART_API_KEY** for OpenDART issuer resolution and Korean annual index leads. Store credentials as Secrets. Do not put keys in CSVs, URLs or repository variables.
 
-- Use the [official filing request schema](V06_OFFICIAL_VALIDATION.md#입력-파일). EDINET resolves the supplied filing date and issuer metadata through the official list and archive API. For a Korean screened candidate without a scheduled request, dossier mode can use the remaining filing budget to resolve issuer identity and retrieve annual filing index metadata. Confirm the fiscal start/end and receipt in the OpenDART request CSV via GARP_OPENDART_REQUESTS. Index entries are metadata, not statement evidence. For other venues use the publisher's official search and approve the final annual attachment URL. Preserve the original URL and SHA-256 when available.
-- Gemini approval CSV fields include ticker, source_url, issuer_name, document_date, date_source_url, document_title, and expected_sha256 where known. Approve an original public PDF/HTML link on the appropriate official host. Dossier mode skips third-party approvals. When primary extraction has already stored the exact approved attachment, the agent uses those hash-matched bytes; otherwise it retrieves the approved original. EDINET XBRL ZIP and OpenDART statement API responses are numerical inputs, not interchangeable with a PDF or HTML annual report.
-- For numerical reconciliation, set GARP_FILING_VENDOR_EXPORT to the approved comparable-vendor CSV with the same legal issuer, concept, period, accounting scope, currency and units. A matching original passage can be recorded without numerical reconciliation when independent comparables are missing.
-- Edit a private copy of valuation_inputs.csv and review all assumptions. The existing valuation audit supplies any reviewed numeric inputs. Bear/Base/Bull outputs and a ±1 percentage-point discount-rate sensitivity appear only when those inputs pass the existing model checks. Resolve comparability and approval gates independently.
+Set these repository variables:
 
-Model observations and quotes are checked against the original, with document hash and passage location. A supporting quotation is only evidence of the quoted text. Its category remains provisional, as do numerical observations without verified statement context. Unsupported proposals are counted and omitted. Narrative extraction is bounded to the selected statement and up to two relevant source passages; absence of an excerpt leaves an explicit review task.
+- **GARP_GEMINI_MODEL** to a Gemini model your Developer API key can use, using the exact model identifier from Google's model catalog. The workflow makes one model metadata request and checks that the model advertises generateContent before sending an approved document. A successful metadata check confirms catalog access. Live generation validation requires the recorded api_responses_received count to be positive.
+- **GARP_GEMINI_MAX_COST_USD**, **GARP_GEMINI_INPUT_PRICE**, **GARP_GEMINI_OUTPUT_PRICE** to your approved positive reservation and the confirmed USD per million input and output tokens for that exact model. The workflow keeps the request and token reservation limits active. Estimated cost uses the API usage report.
+- Optional **GARP_EDINET_INDEX_DATES** to a comma-separated list of up to 20 official index dates on or before the report cutoff. Without it, the bounded search checks the latest five dates and June 19–30 of the latest completed June filing season. This search does not imply all available annuals have been enumerated.
+- Optional **GARP_FILING_VENDOR_EXPORT** to an existing approved independent comparison file, if available. Without it, verified original figures can be traced but no independent vendor reconciliation is claimed.
 
-The dossier is an analyst evidence packet. It leaves conclusions, falsification judgments, investment opinions, and final approval to the human researcher. Existing manually reviewed files and gates are unchanged.
+## Source decisions and outputs
+
+Under cycle-report/research/72_filing_preparation, review.json records the decision and reason for each shortlisted candidate.
+
+- **Automatically verified.** EDINET matches the exchange security code, legal filer, annual document type, publication date, fiscal dates and document ID from its official index. An eligible XBRL request goes to the existing primary parser. Gemini approval also requires a separate official PDF, with a readable cover matching the issuer, annual report type and fiscal period. The workflow creates both CSVs when their respective checks pass. It hashes and passes the PDF bytes directly to the existing Gemini agent. Generated CSVs contain credential-free locators; original bytes stay in the private runner directory.
+- **Human review.** An ambiguous annual, insufficient cover verification, or unavailable compatible document remains out of Gemini. OpenDART issuer and annual index leads are surfaced when configured. An index link does not establish a verified annual original or fiscal period. For mainland China, Hong Kong and Taiwan there is currently no verified automated attachment discovery route in this pipeline. Explicit reviewed inputs remain supported under the [official-source rules](V06_OFFICIAL_VALIDATION.md#입력-파일).
+- **Inaccessible.** Missing publisher credentials, proxy refusals, and failed official fetches are recorded. The workflow skips unverified originals. It generates a dossier from the available evidence for every selected candidate, including unresolved filing or model steps.
+
+Find the dossier index, Markdown and JSON evidence packets, and editable valuation inputs under cycle-report/research/71_research_dossiers in the report artifact. Reviewed numeric assumptions can populate Bear/Base/Bull and sensitivity. Final investment reasoning and approval belong to the human analyst.

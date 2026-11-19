@@ -16,6 +16,7 @@ import pandas as pd
 
 from .discovery_review import candidate_review
 from .filing_evidence import SOURCES, read_export, reconcile
+from .filing_preparation import prepare_inputs
 from .gemini_filing import Gemini, plan, research
 from .industry_classification import load_registry
 from .official_filings import acquire_sources, ATTACHMENT_HOSTS, locate_dart_annual_filings
@@ -83,13 +84,37 @@ def write_json(output, name, payload):
     (output / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
-def gemini_report(args, *, selected_tickers=None, official_observations=()):
+def make_gemini(args, key, dossier):
+    return Gemini(key, args.model, args.max_requests, 1, max_input_bytes=args.gemini_input_bytes,
+                   max_output_tokens=args.gemini_output_tokens, delay=1,
+                   cache_path=getattr(args, 'gemini_cache', None),
+                   total_input_budget=getattr(args, 'gemini_total_input_budget', 250000),
+                   total_output_budget=getattr(args, 'gemini_total_output_budget', 9216),
+                   input_price=getattr(args, 'gemini_input_price', None),
+                   output_price=getattr(args, 'gemini_output_price', None),
+                   max_cost_usd=getattr(args, 'gemini_max_cost_usd', None), dossier=dossier)
+
+
+def gemini_report(args, *, selected_tickers=None, official_observations=(), prepared_originals=None):
     model = args.model
     report = {'model': model, 'status': 'NOT_REQUESTED', 'gemini_requests': 0,
               'api_responses_received': 0}
     if not args.enable_gemini and not args.gemini_preflight:
         return report
     key = os.environ.get('GEMINI_API_KEY', '').strip()
+    agent = None
+    cost_cap = getattr(args, 'gemini_max_cost_usd', None)
+    auto = getattr(args, 'prepare_filing_inputs', False)
+    if auto and args.enable_gemini:
+        if not key:
+            report['model_preflight'] = 'GEMINI_API_KEY_MISSING'
+        elif cost_cap is None or args.gemini_input_price is None or args.gemini_output_price is None:
+            return {**report, 'status': 'BLOCKED', 'reason': 'GEMINI_COST_CAP_AND_TOKEN_PRICES_REQUIRED'}
+        else:
+            agent = make_gemini(args, key, True)
+            report['model_preflight'] = agent.check_model()
+            if report['model_preflight'] != 'MODEL_SUPPORTS_GENERATE_CONTENT':
+                return {**report, 'status': 'BLOCKED', 'reason': report['model_preflight']}
     if not args.approved_sources:
         blockers = ['APPROVED_SOURCES_MISSING']
         if args.enable_gemini and not key:
@@ -103,9 +128,12 @@ def gemini_report(args, *, selected_tickers=None, official_observations=()):
     ledger = args.output / '18_evidence_ledger.csv'
     if not args.gemini_approved_only and (not candidates.is_file() or not ledger.is_file()):
         return {**report, 'status': 'NOT_TESTED', 'reason': 'RESEARCH_CANDIDATES_OR_LEDGER_MISSING'}
+    requested = selected_tickers or []
+    if prepared_originals:
+        requested = [ticker for ticker in requested if ticker in prepared_originals]
     selected, filings = plan(None if args.gemini_approved_only else candidates,
                              None if args.gemini_approved_only else ledger, args.approved_sources,
-                             args.max_documents, (selected_tickers or [])[:args.max_documents])
+                             args.max_documents, requested[:args.max_documents])
     originals = {}
     blocked_sources = {}
     if selected_tickers is not None:
@@ -122,7 +150,10 @@ def gemini_report(args, *, selected_tickers=None, official_observations=()):
                 blocked_sources[ticker] = 'BLOCKED_OFFICIAL_ORIGINAL_HASH_CONFLICT'
                 continue
             filtered[ticker] = replace(filing, expected_sha256=digest or filing.expected_sha256)
-            if digest and args.source_dir and not args.gemini_replay_dir:
+            prepared = (prepared_originals or {}).get(ticker)
+            if prepared is not None and prepared.name == filing.expected_sha256:
+                originals[ticker] = prepared
+            elif digest and args.source_dir and not args.gemini_replay_dir:
                 originals[ticker] = args.source_dir / digest
         if filings and not filtered:
             return {**report, 'status': 'BLOCKED', 'reason': 'OFFICIAL_SOURCE_OR_HASH_APPROVAL_REQUIRED',
@@ -138,14 +169,8 @@ def gemini_report(args, *, selected_tickers=None, official_observations=()):
     if cost_cap is not None and args.enable_gemini and key and (
             getattr(args, 'gemini_input_price', None) is None or getattr(args, 'gemini_output_price', None) is None):
         return {**report, 'status': 'BLOCKED', 'reason': 'GEMINI_TOKEN_PRICES_REQUIRED'}
-    agent = Gemini(key, model, args.max_requests, 1, max_input_bytes=args.gemini_input_bytes,
-                   max_output_tokens=args.gemini_output_tokens, delay=1,
-                   cache_path=getattr(args, 'gemini_cache', None),
-                   total_input_budget=getattr(args, 'gemini_total_input_budget', 250000),
-                   total_output_budget=getattr(args, 'gemini_total_output_budget', 9216),
-                   input_price=getattr(args, 'gemini_input_price', None),
-                   output_price=getattr(args, 'gemini_output_price', None),
-                   max_cost_usd=cost_cap, dossier=selected_tickers is not None) if args.enable_gemini and key else None
+    if agent is None and args.enable_gemini and key:
+        agent = make_gemini(args, key, selected_tickers is not None)
     mode = 'live' if agent else 'preflight' if args.gemini_preflight else 'dry-run'
     options = {'approved_originals': originals} if originals else {}
     result = research(selected, filings, agent, mode=mode, replay_dir=args.gemini_replay_dir, **options)
@@ -153,8 +178,10 @@ def gemini_report(args, *, selected_tickers=None, official_observations=()):
         for company in result['companies']:
             if company['ticker'] in blocked_sources:
                 company['status'] = blocked_sources[company['ticker']]
-        result['companies'].extend({'ticker': ticker, 'status': 'NOT_WITHIN_GEMINI_DOCUMENT_BUDGET'}
-                                   for ticker in selected_tickers[args.max_documents:])
+        result['companies'].extend({
+            'ticker': ticker, 'status': ('NOT_WITHIN_GEMINI_DOCUMENT_BUDGET' if ticker in requested
+                                         else 'NO_AUTO_VERIFIED_ORIGINAL')}
+            for ticker in selected_tickers if ticker not in selected)
     responses = agent.responses_received if agent else 0
     hits = getattr(agent, 'cache_hits', 0)
     status = ('LIVE_RESPONSE_RECEIVED' if responses else 'FAILED' if result['gemini_requests']
@@ -166,7 +193,7 @@ def gemini_report(args, *, selected_tickers=None, official_observations=()):
     reason = ('' if responses or hits else 'NO_SUCCESSFUL_API_RESPONSE' if status == 'FAILED' else
               'DOCUMENT_PREFLIGHT_DID_NOT_REACH_MODEL' if agent else 'PREFLIGHT_ONLY' if args.gemini_preflight
               else 'GEMINI_API_KEY_MISSING')
-    return {**result, 'model': model, 'status': status, 'reason': reason,
+    return {**report, **result, 'model': model, 'status': status, 'reason': reason,
             'api_responses_received': responses,
             'validation_status': validation, 'cache_hits': hits,
             'input_reservation_units': getattr(agent, 'input_reserved', 0),
@@ -278,6 +305,21 @@ def run(args):
     logs = read_table(output, '12_discovery_sources_log.csv')
     selected = select_candidates(output, args.report_limit) if args.research_dossier else None
     selected_tickers = [item['ticker'] for item in selected] if selected is not None else None
+    prepared_originals = {}
+    preparation = {}
+    if args.prepare_filing_inputs:
+        directory = output / '72_filing_preparation'
+        prepared_originals = prepare_inputs(
+            directory, args.source_dir, selected, args.asof_date, args.filing_budget,
+            {name: os.environ.get(name, '').strip() for name in ('DART_API_KEY', 'EDINET_API_KEY')},
+            index_dates=os.environ.get('GARP_EDINET_INDEX_DATES', ''),
+            official=not args.official_filing_requests, gemini=not args.approved_sources)
+        preparation = json.loads((directory / 'review.json').read_text(encoding='utf-8'))
+        for attr, filename in [('official_filing_requests', 'official_filing_requests.csv'),
+                               ('approved_sources', 'gemini_approved_sources.csv')]:
+            path = directory / filename
+            if not getattr(args, attr) and path.is_file():
+                setattr(args, attr, path)
     print('Primary filing import and deterministic reconciliation', flush=True)
     live_primary, filing_attempts = acquire_sources(
         args.official_filing_requests, args.opendart_requests, args.source_dir, args.asof_date,
@@ -285,7 +327,7 @@ def run(args):
         {name: os.environ.get(name, '').strip() for name in ('DART_API_KEY', 'EDINET_API_KEY')},
         replay_dir=args.official_replay_dir, selected_tickers=selected_tickers)
     filing_leads = []
-    if selected and not args.snapshot_csv and not args.official_replay_dir:
+    if selected and not args.prepare_filing_inputs and not args.snapshot_csv and not args.official_replay_dir:
         scheduled = {row['ticker'] for row in filing_attempts}
         unplanned_korean = [row['ticker'] for row in selected if row['market'] == 'Korea' and row['ticker'] not in scheduled]
         filing_leads = locate_dart_annual_filings(
@@ -332,7 +374,7 @@ def run(args):
     pd.DataFrame(coverage).to_csv(output / '60_financial_coverage.csv', index=False)
     print('Gemini filing interpretation and research reports', flush=True)
     try:
-        gemini = gemini_report(args, selected_tickers=selected_tickers, official_observations=live_primary)
+        gemini = gemini_report(args, selected_tickers=selected_tickers, official_observations=live_primary, prepared_originals=prepared_originals)
     except (ImportError, OSError, ValueError) as exc:
         gemini = {'status': 'GEMINI_INPUT_OR_SETUP_FAILED', 'error_type': type(exc).__name__,
                   'model': args.model, 'gemini_requests': 0}
@@ -388,6 +430,7 @@ def run(args):
                                              .get('fetch_error', []) if value)), 'discovery_sources': logs.to_dict('records'),
         'filing_attempts': filing_attempts,
         'official_filing_leads': filing_leads,
+        'filing_preparation': preparation,
         'outcomes': {
             'financial_data_mode': 'SNAPSHOT_REPLAY' if args.snapshot_csv else 'LIVE_WITH_OPTIONAL_CHECKPOINT',
             'discovered_unique_tickers': int(universe.ticker.nunique()),
@@ -448,6 +491,7 @@ def main(argv=None):
     parser.add_argument('--tolerance', type=Decimal, default=Decimal('0.02'))
     parser.add_argument('--approved-sources', type=Path)
     parser.add_argument('--research-dossier', action='store_true')
+    parser.add_argument('--prepare-filing-inputs', action='store_true')
     parser.add_argument('--gemini-max-cost-usd', type=float)
     gemini_mode = parser.add_mutually_exclusive_group()
     gemini_mode.add_argument('--enable-gemini', action='store_true')
@@ -470,6 +514,8 @@ def main(argv=None):
     parser.add_argument('--max-requests', type=int, choices=range(1, 10), default=6)
     parser.add_argument('--report-limit', type=int, choices=range(1, 6), default=5)
     args = parser.parse_args(argv)
+    if args.prepare_filing_inputs and not args.research_dossier:
+        parser.error('Automatic filing preparation requires dossier mode')
     if args.research_dossier and args.gemini_approved_only:
         parser.error('Dossier mode requires screening-selected candidates')
     today = datetime.now(timezone.utc).date()
@@ -483,7 +529,7 @@ def main(argv=None):
         parser.error('Gemini run caps are 250000 input reservation units and 9216 output tokens')
     if args.gemini_cache and args.gemini_cache.resolve().is_relative_to(args.output.resolve()):
         parser.error('The Gemini cache must be outside research artifacts')
-    if (args.opendart_requests or args.official_filing_requests) and (not args.source_dir or args.source_dir.resolve().is_relative_to(args.output.resolve())):
+    if (args.opendart_requests or args.official_filing_requests or args.prepare_filing_inputs) and (not args.source_dir or args.source_dir.resolve().is_relative_to(args.output.resolve())):
         parser.error('Live filing acquisition requires a private --source-dir outside --output')
     previous_run = (args.output / '11_discovery_universe.csv').exists()
     try:

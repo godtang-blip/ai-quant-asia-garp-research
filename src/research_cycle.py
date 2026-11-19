@@ -445,10 +445,10 @@ def main():
     # report cutoff remain owned by the cycle.
     path_flags = ('official-filing-requests', 'opendart-requests', 'vendor-export', 'approved-sources',
                   'source-dir', 'gemini-cache')
-    integer_flags = ('filing-budget', 'max-documents', 'max-requests',
+    integer_flags = ('filing-budget', 'max-documents', 'max-requests', 'report-limit',
                      'gemini-total-input-budget', 'gemini-total-output-budget')
     decimal_flags = ('gemini-input-price', 'gemini-output-price', 'gemini-max-cost-usd')
-    boolean_flags = ('enable-gemini', 'gemini-approved-only', 'research-dossier')
+    boolean_flags = ('enable-gemini', 'gemini-approved-only', 'research-dossier', 'prepare-filing-inputs')
     for flag in path_flags:
         parser.add_argument('--' + flag, type=Path)
     for flag in integer_flags:
