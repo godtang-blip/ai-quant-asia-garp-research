@@ -16,10 +16,10 @@ import numpy as np
 from .discovery_review import review_venues
 from .discovery_v031 import discover_five_markets, select_market_balanced, select_market_coverage_aware
 from .accounting import issuer_evidence, accounting_basis
-from .industry_classification import classify, issuer_representatives, EXCLUDED
+from .industry_classification import campaign_classify, classify, issuer_representatives, EXCLUDED
 from .fx import YahooFX, normalized_values
 from .ranking import valid_number
-from .scoring_v03 import compute_scores, SUBMETRICS, CATEGORY_WEIGHTS
+from .scoring_v03 import compute_scores, SUBMETRICS, CATEGORY_WEIGHTS, PE_ANCHORS, PS_ANCHORS
 from .screen import FIELDS, memo_template
 from .evidence import collect_evidence, read_manual_decisions, render_evidence_book
 from .quality_v031 import sensitivity_report, diagnostics, diagnostics_markdown
@@ -46,9 +46,9 @@ def vendor_industry_group(industry: str, sector: str) -> str:
     return 'unclassified'
 
 
-def _fetch_vendor(ticker:str) -> dict:
+def _fetch_vendor(ticker:str, *, session=None) -> dict:
     import yfinance as yf
-    info=yf.Ticker(ticker).get_info() or {}
+    info=(yf.Ticker(ticker, session=session) if session is not None else yf.Ticker(ticker)).get_info() or {}
     if not isinstance(info,dict) or not info:raise ValueError('No fundamentals from vendor')
     out={key:valid_number(info.get(source_key)) for key,source_key in FIELDS.items()}
     # forwardEPS/PE is a vendor field; do not fabricate its reporting currency.
@@ -214,7 +214,8 @@ def eligibility(ranked):
 
 def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str='all5',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None, per_region:int=50,
-        evidence_mode:str='full', evidence_limit:int=8, *, markets=None, fetch_vendor=None, frozen_discovery=None, classification=None)->dict:
+        evidence_mode:str='full', evidence_limit:int=8, *, markets=None, fetch_vendor=None, frozen_discovery=None,
+        classification=None, campaign=False)->dict:
     if max_symbols<0:raise ValueError('max_symbols must be >= 0')
     if fx_mode not in ('live','off'):raise ValueError('fx_mode live/off')
     if evidence_mode not in ('off','news','full'):raise ValueError('evidence_mode off/news/full')
@@ -249,7 +250,8 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     rows=[]
     for idx, (_, s) in enumerate(selected.iterrows(),1):
         ticker=str(s.ticker)
-        print(f'[{idx}/{len(selected)}] {ticker} {s.peer_group}',flush=True)
+        if not campaign or snap is None or ticker in snap.index:
+            print(f'[{idx}/{len(selected)}] {ticker} {s.peer_group}',flush=True)
         r=s.to_dict()
         r.update({'retrieved_at_utc':now,'fetch_error':'','reported_accounting_standard':'UNKNOWN_PRIMARY_FILING_REQUIRED',
                   'vendor_quote_type':'', 'revenue_total_raw':math.nan, 'valuation_quote_status':'UNVERIFIED',
@@ -282,10 +284,25 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
         else:r['sector_mapping_status']='CURATED_HUMAN_TAXONOMY_UNVERIFIED'
         if classification is not None:
             r['legacy_security_type_status'] = r['security_type_status']
-            r.update(classify(r, classification.get(ticker)))
+            evidence = classification.get(ticker)
+            legacy = classify(r, evidence)
+            r.update(legacy)
+            if campaign:
+                classified_before = legacy['operating_peer_group']
+                if legacy['instrument_class'] in EXCLUDED:
+                    r['legacy_security_type_status'] = 'NON_EQUITY_VENDOR_EXCLUDED'
+                elif legacy['instrument_class'] == 'OPERATING_EQUITY':
+                    r['legacy_security_type_status'] = 'VERIFIED_EQUITY_VENDOR'
+                r.update(campaign_classify(r, legacy, evidence, r['retrieved_at_utc']))
+                r['legacy_peer_group'] = classified_before
             r['peer_group'] = r['operating_peer_group']
             if r['industry_confidence'] == 'HUMAN_REVIEWED':
                 r['sector_mapping_status'] = 'SOURCE_MAPPING_HUMAN_REVIEWED'
+            elif campaign:
+                r['sector_mapping_status'] = r['industry_confidence']
+                r['classification_research_tier'] = 'EXPLORATORY_WITH_INDUSTRY_REVIEW_REQUIRED'
+            if campaign and r['industry_confidence'] == 'HUMAN_REVIEWED':
+                r['classification_research_tier'] = 'INDUSTRY_REVIEWED_STILL_REQUIRES_RESEARCH_GATES'
             if r['instrument_class'] in EXCLUDED:
                 r['security_type_status'] = 'NON_EQUITY_VENDOR_EXCLUDED'
             elif r['instrument_class'] == 'OPERATING_EQUITY':
@@ -346,6 +363,17 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
                                           security_type_status=d.legacy_security_type_status))
         before, _, _ = eligibility(baseline)
         baseline['legacy_eligible'] = before
+        if campaign:
+            ordered = baseline.sort_values(['legacy_eligible', 'cross_industry_score_100', 'ticker'],
+                                           ascending=[False, False, True])
+            old_ranks = ordered.loc[ordered.cross_industry_score_100.notna(), 'ticker'].tolist()
+            new_ranks = ranked.loc[ranked.cross_industry_score_100.notna(), 'ticker'].tolist()
+            ranked['valuation_pe_anchors_used'] = ranked.peer_group.map(
+                lambda group: '|'.join(map(str, PE_ANCHORS.get(group, PE_ANCHORS['unclassified']))))
+            ranked['valuation_ps_anchors_used'] = ranked.peer_group.map(
+                lambda group: '|'.join(map(str, PS_ANCHORS.get(group, PS_ANCHORS['unclassified']))))
+            ranked['legacy_rank'] = ranked.ticker.map({ticker: rank for rank, ticker in enumerate(old_ranks, 1)})
+            ranked['campaign_rank'] = ranked.ticker.map({ticker: rank for rank, ticker in enumerate(new_ranks, 1)})
         audit = ranked[['ticker', 'market', 'classification_version', 'legacy_peer_group',
                         'legacy_sector_mapping_status', 'legacy_security_type_status',
                         'operating_peer_group', 'industry_confidence', 'industry_source',
@@ -358,6 +386,17 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
             baseline[['ticker', 'legacy_eligible', 'cross_industry_score_100']].rename(
                 columns={'cross_industry_score_100': 'legacy_score'}), on='ticker', validate='one_to_one')
         audit['eligibility_changed'] = audit.legacy_eligible.ne(audit.v031_research_eligible)
+        if campaign:
+            fields = ('original_vendor_industry', 'original_vendor_sector', 'issuer_identity_reported',
+                      'issuer_identity_status', 'vendor_classification_observed_at', 'classification_conflicts',
+                      'classification_review_required', 'company', 'instrument_class', 'instrument_source',
+                      'original_exchange_industry', 'listing_industry_url', 'listing_classification_source',
+                      'vendor_classification_url', 'vendor_security_type_reported', 'official_issuer_source_label',
+                      'sector_weights_used', 'valuation_pe_anchors_used', 'valuation_ps_anchors_used',
+                      'legacy_rank', 'campaign_rank', 'classification_research_tier')
+            indexed = ranked.set_index('ticker')
+            for field in fields:
+                audit[field] = audit.ticker.map(indexed[field])
         audit['issuer_research_representative'] = audit.ticker.isin(issuer_representatives(
             ranked[ranked.v031_research_eligible]).ticker)
         audit.to_csv(outputs / '70_industry_classification_audit_v1.csv', index=False)

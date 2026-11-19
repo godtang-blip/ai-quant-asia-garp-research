@@ -77,10 +77,13 @@ def _jpx_locate_table(frame:pd.DataFrame) -> tuple[pd.DataFrame,dict]:
     raise ValueError('JPX schema/header unrecognized (fail closed); observed headers: '+description)
 
 
-def parse_jpx_table(frame:pd.DataFrame, source: str = JPX_XLSX) -> list[dict]:
+def parse_jpx_table(frame:pd.DataFrame, source: str = JPX_XLSX, *, include_industries=False) -> list[dict]:
     """Parse domestic Prime/Standard/Growth equity candidates; no ETF/REIT guesswork."""
     df,found=_jpx_locate_table(frame)
     code,name,segment=(found[k] for k in ('code','name','segment'))
+    industry = next((col for col in df if str(col).strip().casefold() in
+                     {'33業種区分', '33-sector name', '33 sector name', '33 sectors', 'industry (33 sectors)'}), None)
+    disclosed = next((col for col in df if str(col).strip() in {'日付', 'Date'}), None)
     result={}
     for _,r in df.iterrows():
         token=str(r[code]).strip().upper()
@@ -94,16 +97,22 @@ def parse_jpx_table(frame:pd.DataFrame, source: str = JPX_XLSX) -> list[dict]:
         if any(s in typ for s in ('etf','etn','reit','fund','preferred','foreign','investment trust',
                                   'infrastructure','投資信託','外国','優先','pro market')):continue
         result[token+'.T']=_market_row(token+'.T',title,'Japan',source)
+        if include_industries and industry is not None and pd.notna(r[industry]):
+            asof = str(r[disclosed]).strip() if disclosed is not None else ''
+            match = re.fullmatch(r'(\d{4})[-/]?(\d{2})[-/]?(\d{2})(?: 00:00:00)?', asof)
+            result[token+'.T'].update(exchange_industry=str(r[industry]).strip(), listing_source_url=source,
+                                      listing_source_date='-'.join(match.groups()) if match else '')
     if not result:raise ValueError('JPX parsed table contained no eligible domestic equity rows')
     return list(result.values())
 
 
-def source_jpx_list(session=None) -> list[dict]:
+def source_jpx_list(session=None, *, include_industries=False) -> list[dict]:
     sess=session or requests
     failures = []
     for url in (JPX_XLS, JPX_JAPANESE_XLS, JPX_XLSX):
         try:
-            reply = sess.get(url, timeout=35, headers={'User-Agent': 'AsiaGARPResearch/0.5.1'})
+            options = {'allow_redirects': False} if include_industries else {}
+            reply = sess.get(url, timeout=35, headers={'User-Agent': 'AsiaGARPResearch/0.5.1'}, **options)
             reply.raise_for_status()
             content = reply.content
             if len(content) > 15_000_000:
@@ -115,7 +124,10 @@ def source_jpx_list(session=None) -> list[dict]:
             else:
                 raise ValueError('JPX response is not an Excel workbook')
             frame = pd.read_excel(BytesIO(content), header=None, dtype=str, engine=engine)
-            return parse_jpx_table(frame, url)
+            rows = parse_jpx_table(frame, url, include_industries=include_industries)
+            if include_industries and not any(row.get('exchange_industry') for row in rows):
+                raise ValueError('Exchange workbook has no identified industry column')
+            return rows
         except Exception as exc:
             failures.append(f"{url.rsplit('/', 1)[-1]}: {exc}")
     raise ValueError('All JPX workbook variants failed: ' + '; '.join(failures))

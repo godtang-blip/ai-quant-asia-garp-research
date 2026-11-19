@@ -15,7 +15,8 @@ from .v031 import FundamentalsUnavailable
 def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_official',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None,
         per_region:int=90,evidence_mode:str='full',evidence_limit:int=8,
-        asof_date:dt.date|None=None, *, markets=None, fetch_vendor=None, frozen_discovery=None, classification=None)->dict:
+        asof_date:dt.date|None=None, *, markets=None, fetch_vendor=None, frozen_discovery=None,
+        classification=None, campaign=False)->dict:
     options = {}
     if markets is not None:
         options['markets'] = markets
@@ -25,6 +26,8 @@ def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_of
         options['frozen_discovery'] = frozen_discovery
     if classification is not None:
         options['classification'] = classification
+    if campaign:
+        options['campaign'] = campaign
     try:
         meta=run_v05(universe,output,max_symbols,discover_mode,fx_mode,delay_seconds,
                      snapshot_csv,per_region,evidence_mode,evidence_limit,asof_date, **options)

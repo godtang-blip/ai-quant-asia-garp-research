@@ -20,7 +20,7 @@ from .filing_preparation import prepare_inputs
 from .gemini_filing import DEFAULT_TIMEOUT_SECONDS, Gemini, plan, research
 from .industry_classification import load_registry
 from .official_filings import acquire_sources, ATTACHMENT_HOSTS, locate_dart_annual_filings
-from .research_dossier import official_url, select_candidates, write_dossiers
+from .research_dossier import official_url, select_campaign_candidates, select_candidates, write_dossiers
 from .scoring_v03 import SUBMETRICS
 from .v031 import FundamentalsUnavailable, _fetch_vendor
 from .v051 import run as run_legacy
@@ -294,7 +294,14 @@ def run(args):
         frozen = None
         if args.frozen_cycle_plan:
             plan = json.loads(args.frozen_cycle_plan.read_text())
-            discovered = pd.DataFrame(plan['discovered'])
+            industry_path = getattr(args, 'campaign_exchange_evidence', None)
+            if industry_path:
+                snapshot = json.loads(industry_path.read_text())
+                discovered = pd.DataFrame([{**row, **snapshot['rows'].get(row['ticker'], {}),
+                                            'campaign_excluded_instrument': snapshot['exclusions'].get(row['ticker'], '')}
+                                           for row in plan['discovered']])
+            else:
+                discovered = pd.DataFrame(plan['discovered'])
             discovered['is_new_discovery'] = discovered['is_new_discovery'].map(
                 lambda value: str(value).lower() in {'true', '1'})
             frozen = (discovered, pd.DataFrame(plan['discovery_sources']),
@@ -303,7 +310,8 @@ def run(args):
         run_legacy(args.universe, output, 0 if args.full_universe else args.max_symbols,
                    args.discover_mode, args.fx_mode, 0, args.snapshot_csv, args.per_region,
                    args.evidence_mode, args.evidence_limit, args.asof_date, markets=args.markets,
-                   fetch_vendor=budget, frozen_discovery=frozen, classification=registry)
+                   fetch_vendor=budget, frozen_discovery=frozen, classification=registry,
+                   **({'campaign': True} if getattr(args, 'campaign_shortlist', False) else {}))
     except FundamentalsUnavailable as exc:
         failed = exc.attempts
     finally:
@@ -312,7 +320,13 @@ def run(args):
     stages = read_table(output, '32_research_stage_gate.csv')
     universe = read_table(output, '11_discovery_universe.csv')
     logs = read_table(output, '12_discovery_sources_log.csv')
-    selected = select_candidates(output, args.report_limit) if args.research_dossier else None
+    if getattr(args, 'campaign_shortlist', False):
+        shortlist = select_campaign_candidates(output, args.report_limit)
+        pd.DataFrame(shortlist, columns=list(shortlist[0]) if shortlist else ['ticker', 'campaign_selection_reason']
+                     ).to_csv(output / '73_campaign_preliminary_shortlist.csv', index=False)
+        selected = shortlist if args.research_dossier else None
+    else:
+        selected = select_candidates(output, args.report_limit) if args.research_dossier else None
     selected_tickers = [item['ticker'] for item in selected] if selected is not None else None
     prepared_originals = {}
     preparation = {}
@@ -500,6 +514,8 @@ def main(argv=None):
     parser.add_argument('--tolerance', type=Decimal, default=Decimal('0.02'))
     parser.add_argument('--approved-sources', type=Path)
     parser.add_argument('--research-dossier', action='store_true')
+    parser.add_argument('--campaign-shortlist', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--campaign-exchange-evidence', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--prepare-filing-inputs', action='store_true')
     parser.add_argument('--gemini-max-cost-usd', type=float)
     parser.add_argument('--gemini-timeout-seconds', type=int,
@@ -529,6 +545,8 @@ def main(argv=None):
         parser.error('Gemini timeout must be 25–180 seconds')
     if args.prepare_filing_inputs and not args.research_dossier:
         parser.error('Automatic filing preparation requires dossier mode')
+    if args.campaign_exchange_evidence and not (args.campaign_shortlist and args.frozen_cycle_plan):
+        parser.error('Campaign exchange evidence requires a frozen campaign')
     if args.research_dossier and args.gemini_approved_only:
         parser.error('Dossier mode requires screening-selected candidates')
     today = datetime.now(timezone.utc).date()

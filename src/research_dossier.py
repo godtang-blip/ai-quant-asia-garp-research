@@ -1,4 +1,5 @@
 """Assemble analyst evidence packets from the existing research pipeline."""
+from collections import Counter
 from hashlib import sha256
 from html import escape
 import json
@@ -26,6 +27,30 @@ def records(root, name, ticker=None):
 def select_candidates(root, limit):
     # Reuse the engine's issuer-deduplicated, screening-eligible shortlist.
     return records(root, '02_research_shortlist.csv')[:limit]
+
+
+def select_campaign_candidates(root, limit):
+    ranked = records(root, '01_all_research_candidates.csv')
+    eligible = []
+    issuers = set()
+    for rank, row in enumerate(ranked, 1):
+        if row.get('v031_research_eligible', '').lower() not in {'true', '1'}:
+            continue
+        identity = row.get('classification_issuer_id') or row['ticker']
+        if identity not in issuers:
+            eligible.append({**row, 'original_screen_rank': rank})
+            issuers.add(identity)
+    selected = []
+    markets, industries = Counter(), Counter()
+    while eligible and len(selected) < limit:
+        row = min(eligible, key=lambda item: (markets[item['market']], industries[item['peer_group']],
+                                              item['original_screen_rank']))
+        selected.append({**row, 'campaign_selection_order': len(selected) + 1,
+                         'campaign_selection_reason': 'SCREEN_PASSED_MARKET_THEN_INDUSTRY_DIVERSIFICATION'})
+        markets[row['market']] += 1
+        industries[row['peer_group']] += 1
+        eligible.remove(row)
+    return selected
 
 
 def official_url(ticker, url):

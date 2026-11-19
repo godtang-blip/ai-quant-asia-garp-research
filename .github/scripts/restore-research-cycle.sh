@@ -14,7 +14,7 @@ gh run download "$GARP_CYCLE" --name "garp-cycle-$GARP_CYCLE-plan" --dir cycle-w
 jq -e --arg expected "$GARP_CYCLE" '.cycle_id == $expected' cycle-working/plan/plan.json >/dev/null
 # Use repository-scoped artifact IDs. A failed scan aborts the dispatch rather than
 # silently treating an unavailable checkpoint as an empty cycle.
-catalog="$(mktemp "$RUNNER_TEMP/garp-artifacts.XXXXXX")"
+catalog="${GARP_CYCLE_CATALOG:-$(mktemp "$RUNNER_TEMP/garp-artifacts.XXXXXX")}"
 gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
   --jq ".artifacts[] | select(.expired == false and (.name | startswith(\"garp-cycle-$GARP_CYCLE-\"))) |
   [.name, .workflow_run.id, .created_at, .id] | @tsv" > "$catalog"
@@ -63,4 +63,5 @@ jq -cn --argjson items "$jobs" --arg day "$day" '{items:$items, date:$day}' > cy
   printf 'reserved=%s\n' "$(jq '[.items[].budget] | add // 0' cycle-quota.json)"
   printf 'quota_date=%s\n' "$day"
   printf 'provider_version=%s\n' "$(jq -er '.provider_version' cycle-working/plan/plan.json)"
+  printf 'reserved_before_today=%s\n' "$reserved"
 } >> "$GITHUB_OUTPUT"

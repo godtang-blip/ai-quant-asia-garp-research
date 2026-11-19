@@ -6,7 +6,7 @@ on:
         description: 'Optional durable research cycle action'
         type: choice
         default: off
-        options: ['off', 'initialize', 'batch', 'aggregate']
+        options: ['off', 'initialize', 'batch', 'aggregate', 'autopilot', 'autopilot-full-sweep', 'autopilot-resume', 'autopilot-continue']
       cycle_state:
         description: 'Workflow run ID that initialized the immutable cycle'
         type: string
@@ -85,7 +85,7 @@ on:
         type: string
         default: ''
       max_symbols:
-        description: 'Maximum selected securities in bounded mode'
+        description: 'Maximum symbols in bounded mode. For Autopilot, enter the completed Batch or latest campaign run ID.'
         required: true
         default: '25'
         type: string
@@ -584,3 +584,123 @@ jobs:
           name: garp-cycle-${{ inputs.cycle_state }}-report-${{ github.run_attempt }}
           path: cycle-report/
           retention-days: 30
+
+  campaign:
+    if: ${{ startsWith(inputs.cycle_mode, 'autopilot') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      status: ${{ steps.report.outputs.status }}
+    env:
+      GARP_CYCLE: ${{ inputs.cycle_state }}
+      GARP_CAMPAIGN_MODE: ${{ inputs.cycle_mode == 'autopilot' && 'research-now' || inputs.cycle_mode == 'autopilot-full-sweep' && 'full-sweep' || inputs.cycle_mode == 'autopilot-resume' && 'resume' || 'continue' }}
+      GARP_CAMPAIGN_CHECKPOINT: ${{ inputs.max_symbols }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-gemini.txt
+      - name: Verify completed handoff and restore existing checkpoints
+        id: restore
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GARP_CYCLE_ARTIFACTS: ${{ vars.GARP_ALLOW_FINANCIAL_CHECKPOINT_ARTIFACTS }}
+        run: bash .github/scripts/campaign-transition.sh restore
+      - name: Install the frozen financial provider version
+        env:
+          GARP_PROVIDER_VERSION: ${{ steps.restore.outputs.provider_version }}
+        run: |
+          [[ "$GARP_PROVIDER_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]
+          python -m pip install -r requirements.txt "yfinance==$GARP_PROVIDER_VERSION"
+      - name: Plan and bound the next wave
+        id: plan
+        env:
+          GARP_CAMPAIGN_CONTROL: ${{ vars.GARP_CAMPAIGN_CONTROL }}
+          GARP_CYCLE_RESERVED_TODAY: ${{ steps.restore.outputs.reserved_before_today }}
+          GARP_CYCLE_DAILY_BUDGET: ${{ vars.GARP_CYCLE_DAILY_BUDGET }}
+          GARP_CAMPAIGN_TOTAL_BUDGET: ${{ vars.GARP_CAMPAIGN_TOTAL_BUDGET }}
+          GARP_CAMPAIGN_MAX_RUNS: ${{ vars.GARP_CAMPAIGN_MAX_RUNS }}
+          GARP_CAMPAIGN_MAX_HOURS: ${{ vars.GARP_CAMPAIGN_MAX_HOURS }}
+          GARP_CYCLE_REQUEST_DELAY: ${{ vars.GARP_CYCLE_REQUEST_DELAY }}
+          GARP_CYCLE_JOB_BUDGET: ${{ inputs.financial_budget }}
+          GARP_REPORT_LIMIT: ${{ inputs.report_limit }}
+          GARP_FILING_BUDGET: ${{ inputs.filing_budget }}
+          GARP_ENABLE_MODEL: ${{ inputs.enable_gemini }}
+          GARP_MAX_DOCS: ${{ inputs.gemini_max_documents }}
+          GARP_MAX_CALLS: ${{ inputs.gemini_max_requests }}
+          GARP_CLASSIFICATION: ${{ vars.GARP_CLASSIFICATION_REGISTRY }}
+          GARP_EDINET_INDEX_DATES: ${{ vars.GARP_EDINET_INDEX_DATES }}
+          GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
+          GARP_GEMINI_INPUT_PRICE: ${{ vars.GARP_GEMINI_INPUT_PRICE }}
+          GARP_GEMINI_OUTPUT_PRICE: ${{ vars.GARP_GEMINI_OUTPUT_PRICE }}
+          GARP_GEMINI_MAX_COST_USD: ${{ vars.GARP_GEMINI_MAX_COST_USD }}
+          GARP_GEMINI_TOTAL_INPUT_BUDGET: ${{ vars.GARP_GEMINI_TOTAL_INPUT_BUDGET }}
+          GARP_GEMINI_TOTAL_OUTPUT_BUDGET: ${{ vars.GARP_GEMINI_TOTAL_OUTPUT_BUDGET }}
+          GARP_GEMINI_TIMEOUT_SECONDS: ${{ vars.GARP_GEMINI_TIMEOUT_SECONDS }}
+          GARP_GEMINI_DIAGNOSTIC_CANARY: ${{ vars.GARP_GEMINI_DIAGNOSTIC_CANARY }}
+        run: python -m src.research_campaign prepare
+      - name: Persist campaign lease before any provider call
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-campaign-lease-${{ github.run_id }}
+          path: cycle-campaign/lease.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Reserve financial quota in the shared cycle ledger
+        if: ${{ steps.plan.outputs.reserved != '0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-quota-${{ steps.plan.outputs.quota_date }}-${{ steps.plan.outputs.reserved }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cycle-quota.json
+          retention-days: 2
+          if-no-files-found: error
+      - name: Collect the reserved financial wave
+        id: finance
+        timeout-minutes: 25
+        run: python -m src.research_campaign collect
+      - name: Preserve financial checkpoints before filing and model work
+        if: ${{ always() && steps.finance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-state-${{ github.run_attempt }}
+          path: cycle-working/state/*.sqlite
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Aggregate, classify and build the candidate package
+        id: report
+        timeout-minutes: 27
+        env:
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m src.research_campaign report
+      - name: Publish campaign dashboard and research package
+        if: ${{ !cancelled() && steps.report.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-campaign-${{ inputs.cycle_state }}-${{ github.run_id }}
+          path: cycle-report/
+          retention-days: 90
+          if-no-files-found: error
+
+  campaign_continue:
+    if: ${{ needs.campaign.result == 'success' && needs.campaign.outputs.status == 'CONTINUE_READY' }}
+    needs: campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Continue the campaign on this branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GARP_CYCLE: ${{ inputs.cycle_state }}
+        run: bash .github/scripts/campaign-transition.sh continue

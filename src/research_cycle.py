@@ -166,22 +166,23 @@ def validate_checkpoint(db, tickers):
         raise ValueError('Foreign checkpoint attempt history')
 
 
-def claim(db, now):
+def claim(db, now, ticker=None, expected_attempt=None):
     with db:
         db.execute('BEGIN IMMEDIATE')
         if db.execute("SELECT 1 FROM work WHERE status='BLOCKED_PROVIDER' AND retry_after>? LIMIT 1",
                       (now.isoformat(),)).fetchone():
             return None
-        row = db.execute("""SELECT ticker, attempt_count FROM work WHERE
+        query = """SELECT ticker, attempt_count FROM work WHERE
+            (? IS NULL OR ticker=?) AND
             (status='NOT_STARTED' OR (status IN ('IN_PROGRESS','BLOCKED_PROVIDER','RETRYABLE_FAILURE') AND retry_after<=?))
-            ORDER BY attempt_count, ticker LIMIT 1""", (now.isoformat(),)).fetchone()
+            ORDER BY attempt_count, ticker LIMIT 1"""
+        parameters = (ticker, ticker, now.isoformat())
+        row = db.execute(query, parameters).fetchone()
         while row is not None and row['attempt_count'] >= RETRIES:
             db.execute("UPDATE work SET status='PERMANENT_FAILURE', lease=NULL, retry_after=NULL, "
                        "error=COALESCE(error,'INTERRUPTED_RETRY_LIMIT') WHERE ticker=?", (row['ticker'],))
-            row = db.execute("""SELECT ticker, attempt_count FROM work WHERE
-                (status='NOT_STARTED' OR (status IN ('IN_PROGRESS','BLOCKED_PROVIDER','RETRYABLE_FAILURE') AND retry_after<=?))
-                ORDER BY attempt_count, ticker LIMIT 1""", (now.isoformat(),)).fetchone()
-        if row is None:
+            row = db.execute(query, parameters).fetchone()
+        if row is None or (expected_attempt is not None and row['attempt_count'] + 1 != expected_attempt):
             return None
         ticker, attempt = row['ticker'], row['attempt_count'] + 1
         token = secrets.token_hex(16)
@@ -205,11 +206,13 @@ def classify_response(payload):
         math.isfinite(number(payload.get(name))) for name in ('operating_margin', 'roe')) else 'SUCCESS_INCOMPLETE_DATA'
 
 
-def run_shard(plan, shard, directory, budget, delay, *, quota_date=None, fetch=_fetch_vendor, clock=utcnow, sleep=time.sleep):
+def run_shard(plan, shard, directory, budget, delay, *, quota_date=None, fetch=_fetch_vendor, clock=utcnow,
+              sleep=time.sleep, selected_ticker=None, expected_attempt=None):
     if not 0 <= budget <= 500 or delay < 0:
         raise ValueError('Invalid shard dispatch budget or delay')
     if plan['provider_version'] != version(PROVIDER):
         raise ValueError('Incompatible provider version; install the version pinned by the plan')
+    last_status = None
     with closing(connect_checkpoint(checkpoint_path(directory, shard), plan, shard, create=True)) as db:
         for index in range(budget):
             if index:
@@ -217,7 +220,7 @@ def run_shard(plan, shard, directory, budget, delay, *, quota_date=None, fetch=_
             now = clock()
             if quota_date is not None and now.date() != quota_date:
                 break
-            reservation = claim(db, now)
+            reservation = claim(db, now, selected_ticker, expected_attempt)
             if reservation is None:
                 break
             ticker, attempt, token = reservation
@@ -233,7 +236,7 @@ def run_shard(plan, shard, directory, budget, delay, *, quota_date=None, fetch=_
             except Exception as exc:
                 error = type(exc).__name__
                 response = getattr(exc, 'response', None)
-                code = getattr(response, 'status_code', None)
+                code = getattr(response, 'status_code', getattr(exc, 'status_code', None))
                 if error == 'YFRateLimitError' or code in {401, 403, 429}:
                     status = 'BLOCKED_PROVIDER'
                     retry = timestamp + timedelta(hours=24)
@@ -251,8 +254,11 @@ def run_shard(plan, shard, directory, budget, delay, *, quota_date=None, fetch=_
                     raise ValueError('Expired worker reservation prevented a stale write')
                 db.execute('UPDATE attempts SET completed_at=?, outcome=? WHERE reservation=?',
                            (clock().isoformat(), status, token))
-            if status == 'BLOCKED_PROVIDER':
+            last_status = status
+            # A campaign reservation covers one specific security and one attempt.
+            if status == 'BLOCKED_PROVIDER' or selected_ticker is not None:
                 break
+    return last_status
 
 
 def summaries(plan, directory, now=None):

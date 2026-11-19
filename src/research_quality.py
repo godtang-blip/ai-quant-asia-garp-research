@@ -214,7 +214,12 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
              for k in ('decision_date','decision_reason','evidence_urls','analyst_reviewed_by',
                        'key_counterevidence','initial_thesis','revisit_trigger'))
         if not reviewed:reasons.append('HUMAN_ACCEPTANCE_WITH_COUNTEREVIDENCE_NOT_RECORDED')
-        if stage=='VALUATION_REVIEWED' and reviewed:stage='MEMO_READY'
+        industry_reviewed = ('classification_research_tier' not in r or
+                             r.get('industry_confidence') == 'HUMAN_REVIEWED' and
+                             not r.get('classification_conflicts'))
+        if not industry_reviewed:
+            reasons.append('INDEPENDENT_INDUSTRY_REVIEW_REQUIRED')
+        if stage=='VALUATION_REVIEWED' and reviewed and industry_reviewed:stage='MEMO_READY'
         row={'ticker':t,'company':r.get('company',''),'market':r.get('market',''),
             'priority_score':r.get('cross_industry_score_100',''),
             'research_stage':stage, 'memo_ready':stage=='MEMO_READY',
