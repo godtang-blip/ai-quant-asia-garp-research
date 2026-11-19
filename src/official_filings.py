@@ -2,11 +2,13 @@
 from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
+from io import BytesIO
 import json
 from pathlib import Path
 import re
 import time
 from urllib.parse import urlsplit
+from zipfile import is_zipfile
 
 import requests
 
@@ -197,6 +199,8 @@ def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, k
                     digest = sha256(raw).hexdigest()
                     if filing.expected_sha256 and digest != filing.expected_sha256:
                         raise SourceUnavailable('FILING_HASH_MISMATCH')
+                    if venue == 'JPX' and is_zipfile(BytesIO(raw)):
+                        attempt.update(document_retrieved=True, source_sha256=digest, source_url=url)
                     observations = parser(raw, filing)
                     attempt['document_retrieved'] = True
                     store_original(source_dir, digest, raw)
@@ -207,7 +211,8 @@ def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, k
                 attempt.update(status='PARSED' if extracted else 'NO_SUPPORTED_STATEMENT_ROWS',
                                observations=len(extracted))
             except (SourceUnavailable, EDINETError, StatementError) as exc:
-                attempt.update(status='NOT_TESTED' if str(exc).startswith('PROXY_CONNECT_') else 'FAILED',
+                attempt.update(status=('PARSE_FAILED' if attempt['document_retrieved'] else
+                                       'NOT_TESTED' if str(exc).startswith('PROXY_CONNECT_') else 'FAILED'),
                                reason=str(exc))
             except (ValueError, KeyError, OSError, requests.RequestException) as exc:
                 # Generic transport and document errors may include credentialized parameters.

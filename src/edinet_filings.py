@@ -10,6 +10,7 @@ from lxml import etree
 
 
 API = 'https://api.edinet-fsa.go.jp/api/v2/documents'
+EDINET_IDENTIFIER_SCHEME = 'http://disclosure.edinet-fsa.go.jp'
 XBRL = 'http://www.xbrl.org/2003/instance'
 ISO4217 = 'http://www.xbrl.org/2003/iso4217'
 TAXONOMY = {
@@ -103,6 +104,18 @@ def instance(raw):
     return root, candidates[0].filename
 
 
+def issuer_context(context, filing, ns):
+    if context is None:
+        return False
+    identifier = context.find('x:entity/x:identifier', ns)
+    # EDINET uses -000 for the filing issuer. Other suffixes are separate
+    # identifiers and must not be mapped to the issuer by prefix.
+    return (identifier is not None and identifier.get('scheme') == EDINET_IDENTIFIER_SCHEME
+            and identifier.text in {filing.issuer_id, f'{filing.issuer_id}-000'}
+            and context.find('x:entity/x:segment', ns) is None
+            and context.find('x:scenario', ns) is None)
+
+
 def parse_xbrl(raw, filing):
     root, filename = instance(raw)
     ns = {'x': XBRL}
@@ -112,14 +125,17 @@ def parse_xbrl(raw, filing):
             len(units) != len(root.findall('x:unit', ns))):
         raise EDINETError('EDINET_DUPLICATE_XBRL_CONTEXT_OR_UNIT')
     consolidated = []
+    scope_context = contexts.get('FilingDateInstant')
+    if (not issuer_context(scope_context, filing, ns) or
+            scope_context.findtext('x:period/x:instant', namespaces=ns) != str(filing.publication_date)):
+        raise EDINETError('EDINET_CONSOLIDATED_SCOPE_UNCONFIRMED')
     for fact in root:
         if not isinstance(fact.tag, str):
             continue
         name = etree.QName(fact)
-        if name.localname == 'WhetherConsolidatedFinancialStatementsArePreparedDEI' and taxonomy(name.namespace) == 'jpdei':
-            ref = contexts.get(fact.get('contextRef'))
-            if ref is not None and ref.findtext('x:entity/x:identifier', namespaces=ns) == filing.issuer_id:
-                consolidated.append((fact.text or '').strip())
+        if (name.localname == 'WhetherConsolidatedFinancialStatementsArePreparedDEI'
+                and taxonomy(name.namespace) == 'jpdei' and fact.get('contextRef') == 'FilingDateInstant'):
+            consolidated.append((fact.text or '').strip())
     if set(consolidated) != {'true'} and set(consolidated) != {'1'}:
         raise EDINETError('EDINET_CONSOLIDATED_SCOPE_UNCONFIRMED')
     rows = []
@@ -138,9 +154,7 @@ def parse_xbrl(raw, filing):
         if context_id != ('CurrentYearInstant' if instant else 'CurrentYearDuration'):
             continue
         context = contexts.get(context_id)
-        if context is None or context.findtext('x:entity/x:identifier', namespaces=ns) != filing.issuer_id:
-            continue
-        if context.find('x:entity/x:segment', ns) is not None or context.find('x:scenario', ns) is not None:
+        if not issuer_context(context, filing, ns):
             continue
         period = context.find('x:period', ns)
         if period is None:
@@ -164,7 +178,7 @@ def parse_xbrl(raw, filing):
         rows.append(dict(metric=metric, definition=qname.localname, statement=statement,
                          period_start=start, period_end=end, period_kind='INSTANT' if instant else 'FY',
                          scope='CONSOLIDATED', currency=currency, unit='CURRENCY', scale='1',
-                         value=str(value), parser_version='edinet-xbrl-1',
+                         value=str(value), parser_version='edinet-xbrl-2',
                          source_locator=f'{filename}:{fact.sourceline} {qname.localname}[{context_id}]'))
     counts = Counter(row['metric'] for row in rows)
     return [row for row in rows if counts[row['metric']] == 1]

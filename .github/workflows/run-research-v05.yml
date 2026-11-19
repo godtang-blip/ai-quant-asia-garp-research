@@ -190,6 +190,7 @@ jobs:
           EDINET_API_KEY: ${{ !inputs.legacy_research && inputs.official_filing_requests != '' && secrets.EDINET_API_KEY || '' }}
           GEMINI_API_KEY: ${{ !inputs.legacy_research && inputs.enable_gemini && secrets.GEMINI_API_KEY || '' }}
           GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
+          GARP_GEMINI_TIMEOUT_SECONDS: ${{ vars.GARP_GEMINI_TIMEOUT_SECONDS }}
           GARP_DOSSIER: ${{ vars.GARP_RESEARCH_DOSSIER }}
           GARP_GEMINI_MAX_COST: ${{ vars.GARP_GEMINI_MAX_COST_USD }}
           GARP_INPUT_GEMINI: ${{ inputs.enable_gemini }}
@@ -529,6 +530,7 @@ jobs:
           GARP_MAX_CALLS: ${{ inputs.gemini_max_requests }}
           GARP_FILING_BUDGET: ${{ inputs.filing_budget }}
           GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
+          GARP_GEMINI_TIMEOUT_SECONDS: ${{ vars.GARP_GEMINI_TIMEOUT_SECONDS }}
           DART_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && secrets.DART_API_KEY || '' }}
           EDINET_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && (vars.GARP_RESEARCH_DOSSIER == '1' || inputs.official_filing_requests != '') && secrets.EDINET_API_KEY || '' }}
           GARP_EDINET_INDEX_DATES: ${{ vars.GARP_EDINET_INDEX_DATES }}

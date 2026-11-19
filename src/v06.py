@@ -17,7 +17,7 @@ import pandas as pd
 from .discovery_review import candidate_review
 from .filing_evidence import SOURCES, read_export, reconcile
 from .filing_preparation import prepare_inputs
-from .gemini_filing import Gemini, plan, research
+from .gemini_filing import DEFAULT_TIMEOUT_SECONDS, Gemini, plan, research
 from .industry_classification import load_registry
 from .official_filings import acquire_sources, ATTACHMENT_HOSTS, locate_dart_annual_filings
 from .research_dossier import official_url, select_candidates, write_dossiers
@@ -92,7 +92,8 @@ def make_gemini(args, key, dossier):
                    total_output_budget=getattr(args, 'gemini_total_output_budget', 9216),
                    input_price=getattr(args, 'gemini_input_price', None),
                    output_price=getattr(args, 'gemini_output_price', None),
-                   max_cost_usd=getattr(args, 'gemini_max_cost_usd', None), dossier=dossier)
+                   max_cost_usd=getattr(args, 'gemini_max_cost_usd', None), dossier=dossier,
+                   timeout_seconds=getattr(args, 'gemini_timeout_seconds', DEFAULT_TIMEOUT_SECONDS))
 
 
 def gemini_report(args, *, selected_tickers=None, official_observations=(), prepared_originals=None):
@@ -493,6 +494,8 @@ def main(argv=None):
     parser.add_argument('--research-dossier', action='store_true')
     parser.add_argument('--prepare-filing-inputs', action='store_true')
     parser.add_argument('--gemini-max-cost-usd', type=float)
+    parser.add_argument('--gemini-timeout-seconds', type=int,
+                        default=os.environ.get('GARP_GEMINI_TIMEOUT_SECONDS') or DEFAULT_TIMEOUT_SECONDS)
     gemini_mode = parser.add_mutually_exclusive_group()
     gemini_mode.add_argument('--enable-gemini', action='store_true')
     gemini_mode.add_argument('--gemini-preflight', action='store_true')
@@ -514,6 +517,8 @@ def main(argv=None):
     parser.add_argument('--max-requests', type=int, choices=range(1, 10), default=6)
     parser.add_argument('--report-limit', type=int, choices=range(1, 6), default=5)
     args = parser.parse_args(argv)
+    if not 25 <= args.gemini_timeout_seconds <= 180:
+        parser.error('Gemini timeout must be 25–180 seconds')
     if args.prepare_filing_inputs and not args.research_dossier:
         parser.error('Automatic filing preparation requires dossier mode')
     if args.research_dossier and args.gemini_approved_only:

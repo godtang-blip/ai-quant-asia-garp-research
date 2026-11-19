@@ -36,17 +36,23 @@ PUBLICATIONS = [
 ]
 
 
-def xbrl_archive(*, scope='true', context='CurrentYearDuration', namespace='jppfs'):
+def xbrl_archive(*, scope='true', context='CurrentYearDuration', namespace='jppfs',
+                 identifier='E02144-000', scheme='http://disclosure.edinet-fsa.go.jp',
+                 scope_namespace='jpdei', scope_context='FilingDateInstant', filing_date='2025-06-18',
+                 fiscal_end='2025-03-31', scope_identifier=None, scenario=''):
     xml = f'''<x:xbrl xmlns:x="http://www.xbrl.org/2003/instance"
     xmlns:iso="http://www.xbrl.org/2003/iso4217"
     xmlns:jppfs="http://disclosure.edinet-fsa.go.jp/taxonomy/jppfs/2024-11-01/jppfs_cor"
-    xmlns:jpdei="http://disclosure.edinet-fsa.go.jp/taxonomy/jpdei/2024-11-01/jpdei_cor"
+    xmlns:jpdei="http://disclosure.edinet-fsa.go.jp/taxonomy/jpdei/2013-08-31/jpdei_cor"
     xmlns:custom="https://unrecognized.example/concepts">
-    <x:context id="{context}"><x:entity><x:identifier scheme="http://disclosure.edinet-fsa.go.jp">E02144</x:identifier></x:entity>
-      <x:period><x:startDate>2024-04-01</x:startDate><x:endDate>2025-03-31</x:endDate></x:period>
+    <x:context id="FilingDateInstant"><x:entity><x:identifier scheme="{scheme}">{scope_identifier or identifier}</x:identifier></x:entity>
+      <x:period><x:instant>{filing_date}</x:instant></x:period>
+    </x:context>
+    <x:context id="{context}"><x:entity><x:identifier scheme="{scheme}">{identifier}</x:identifier></x:entity>
+      <x:period><x:startDate>2024-04-01</x:startDate><x:endDate>{fiscal_end}</x:endDate></x:period>{scenario}
     </x:context>
     <x:unit id="JPY"><x:measure>iso:JPY</x:measure></x:unit>
-    <jpdei:WhetherConsolidatedFinancialStatementsArePreparedDEI contextRef="{context}">{scope}</jpdei:WhetherConsolidatedFinancialStatementsArePreparedDEI>
+    <{scope_namespace}:WhetherConsolidatedFinancialStatementsArePreparedDEI contextRef="{scope_context}">{scope}</{scope_namespace}:WhetherConsolidatedFinancialStatementsArePreparedDEI>
     <{namespace}:NetSales contextRef="{context}" unitRef="JPY" decimals="-6">1000000</{namespace}:NetSales>
     </x:xbrl>'''
     result = BytesIO()
@@ -86,6 +92,44 @@ def test_edinet_blocks_parent_and_custom_facts(context, namespace):
     assert parse_xbrl(xbrl_archive(context=context, namespace=namespace), filing) == []
     with pytest.raises(EDINETError, match='CONSOLIDATED_SCOPE_UNCONFIRMED'):
         parse_xbrl(xbrl_archive(scope='false'), filing)
+
+
+@pytest.mark.parametrize('overrides', [
+    {'scope_identifier': 'E02144-001'}, {'scope_identifier': 'E09999-000'},
+    {'scheme': 'https://unrecognized.example'}, {'scope_namespace': 'custom'},
+    {'scope_context': 'CurrentYearDuration'}, {'filing_date': '2025-06-17'},
+])
+def test_edinet_scope_requires_official_issuer_scheme_taxonomy_and_filing_context(overrides):
+    # Public EDINET annual specimens such as S100YBXA use E-code-000,
+    # jpdei_cor dated 2013-08-31, and the FilingDateInstant context for DEI.
+    filing = FilingRequest.from_row(EDINET, CUTOFF)
+    with pytest.raises(EDINETError, match='EDINET_CONSOLIDATED_SCOPE_UNCONFIRMED'):
+        parse_xbrl(xbrl_archive(**overrides), filing)
+
+
+@pytest.mark.parametrize('overrides', [
+    {'identifier': 'E02144-001', 'scope_identifier': 'E02144-000'},
+    {'fiscal_end': '2025-04-01'}, {'scenario': '<x:scenario/>'},
+])
+def test_edinet_independently_checks_financial_context(overrides):
+    filing = FilingRequest.from_row(EDINET, CUTOFF)
+    assert parse_xbrl(xbrl_archive(**overrides), filing) == []
+
+
+def test_edinet_records_download_even_when_scope_parsing_fails(monkeypatch, tmp_path):
+    request = tmp_path / 'edinet.csv'
+    pd.DataFrame([EDINET]).to_csv(request, index=False)
+    raw = xbrl_archive(scope='false')
+    monkeypatch.setattr('src.official_filings.fetch_edinet',
+                        lambda *args: (raw, 'https://api.edinet-fsa.go.jp/api/v2/documents/S100TXYZ?type=1', parse_xbrl))
+    rows, attempts = acquire_sources(request, None, tmp_path / 'originals', CUTOFF, 1, 0,
+                                     {'EDINET_API_KEY': 'fixture'})
+    assert not rows
+    attempt, = attempts
+    assert attempt['source_response_received'] and attempt['document_retrieved']
+    assert attempt['source_sha256'] == sha256(raw).hexdigest()
+    assert (attempt['status'], attempt['reason'], attempt['observations']) == (
+        'PARSE_FAILED', 'EDINET_CONSOLIDATED_SCOPE_UNCONFIRMED', 0)
 
 
 def schedule(venue, ticker, host, **extra):
@@ -276,6 +320,7 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
     from types import SimpleNamespace
 
     from google import genai
+    from google.genai.errors import APIError
 
     from src import research_cycle as cycle
     from src.scoring_v03 import SUBMETRICS
@@ -323,14 +368,27 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
                         lambda _: SimpleNamespace(pages=[SimpleNamespace(extract_text=lambda: cover)]))
     monkeypatch.setattr('src.gemini_filing.retrieve', lambda *_: pytest.fail('Private original should be reused'))
     calls = []
+
     def response(**kwargs):
         calls.append(kwargs)
+        assert kwargs['config'].response_mime_type == 'application/json'
+        assert not kwargs['config'].tools
         if len(calls) == 1:
-            return SimpleNamespace(function_calls=[SimpleNamespace(name='read_passage', args={'id': 0})])
-        return SimpleNamespace(text='{"observations":[],"excerpts":[]}')
+            raise APIError(504, {'error': {'message': 'fixture gateway timeout'}})
+        observation = {'metric_label': 'Revenue', 'value_text': '1,500', 'currency': 'HKD',
+                       'unit': 'thousands', 'period_start': '', 'period_end': '2024-12-31',
+                       'quote': 'Revenue 1,500 1,300'}
+        return SimpleNamespace(text=json.dumps({'observations': [observation], 'excerpts': []}))
     models = SimpleNamespace(generate_content=response, get=lambda **kwargs: SimpleNamespace(
         supported_actions=['generateContent']))
-    monkeypatch.setattr(genai, 'Client', lambda **kwargs: SimpleNamespace(models=models))
+    def client(**kwargs):
+        assert kwargs['http_options'].timeout == 120_000
+        assert kwargs['http_options'].retry_options.attempts == 1
+        return SimpleNamespace(models=models)
+
+    monkeypatch.setattr(genai, 'Client', client)
+    monkeypatch.setattr('src.gemini_filing.time.sleep', lambda _: None)
+    monkeypatch.setenv('GARP_GEMINI_TIMEOUT_SECONDS', '120')
     monkeypatch.setenv('EDINET_API_KEY', 'fixture-edinet')
     monkeypatch.setenv('GEMINI_API_KEY', 'fixture-model')
     monkeypatch.setenv('GARP_EDINET_INDEX_DATES', '2025-06-18')
@@ -359,7 +417,17 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
     assert manifest['vendor_requests'] == 0 and manifest['filing_attempts'][0]['document_retrieved']
     assert manifest['verification_states'] == {'MACHINE_RECONCILED': 1}
     assert manifest['gemini']['model_preflight'] == 'MODEL_SUPPORTS_GENERATE_CONTENT'
-    assert manifest['gemini']['api_responses_received'] == len(calls) == 2
+    assert manifest['gemini']['api_responses_received'] == 1 and len(calls) == 2
+    assert manifest['gemini']['transient_failures'] == {'HTTP_504': 1}
+    assert manifest['gemini']['generation_timeout_seconds'] == 120
+    model_report = json.loads((evidence / '63_gemini_evidence.json').read_text())
+    company, = model_report['companies']
+    observation, = model_report['observations']
+    assert company['passage_selection_method'] == 'DETERMINISTIC_FINANCIAL_PASSAGE'
+    assert company['selected_location'].startswith('PDF page 1')
+    assert observation['document_sha256'] == sha256(pdf).hexdigest()
+    assert observation['verification_status'] == 'PROVISIONAL_CONTEXT_UNRESOLVED'
+    assert observation['filing_verified'] is False
     assert manifest['research_dossiers']['dossiers'][0]['ticker'] == ticker
 
 
