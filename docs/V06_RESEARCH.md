@@ -51,3 +51,5 @@ python -m src.v06 --discover-mode all5_official --max-symbols 25 \
 기존 파일명을 유지합니다. 전체 발견 종목 재무 데이터가 미확보된 경우 실행 매니페스트가 부분 결과로 표시합니다. `MACHINE_RECONCILED`는 전달된 비교 가능 수치가 허용 오차 이내라는 뜻입니다. 사람의 승인 및 투자 모델 검증은 각각 별도 상태입니다.
 
 Actions에서 기존 연구 워크플로를 수동 실행합니다. 기본은 종목 및 호출 수 제한을 적용한 v0.6이며 `discovery_only`와 `legacy_research` 선택을 지원합니다. 공식 목록만 재확인하려면 `python -m src.discovery_smoke --output outputs/discovery`를 실행합니다.
+
+다중 실행 샤드, 영속 체크포인트 복원, 업종 검토 및 운영 제한은 [전체 시장 연구 운영](V06_PRODUCTION_HARDENING.md)을 참조하세요.
