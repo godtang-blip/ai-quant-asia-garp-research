@@ -191,6 +191,7 @@ jobs:
           GEMINI_API_KEY: ${{ !inputs.legacy_research && inputs.enable_gemini && secrets.GEMINI_API_KEY || '' }}
           GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
           GARP_GEMINI_TIMEOUT_SECONDS: ${{ vars.GARP_GEMINI_TIMEOUT_SECONDS }}
+          GARP_GEMINI_DIAGNOSTIC_CANARY: ${{ vars.GARP_GEMINI_DIAGNOSTIC_CANARY }}
           GARP_DOSSIER: ${{ vars.GARP_RESEARCH_DOSSIER }}
           GARP_GEMINI_MAX_COST: ${{ vars.GARP_GEMINI_MAX_COST_USD }}
           GARP_INPUT_GEMINI: ${{ inputs.enable_gemini }}
@@ -523,6 +524,8 @@ jobs:
           GARP_ENABLE_MODEL: ${{ inputs.cycle_mode == 'aggregate' && inputs.enable_gemini }}
           GARP_DOSSIER: ${{ inputs.cycle_mode == 'aggregate' && vars.GARP_RESEARCH_DOSSIER || '' }}
           GARP_GEMINI_MAX_COST: ${{ vars.GARP_GEMINI_MAX_COST_USD }}
+          GARP_GEMINI_TOTAL_INPUT_BUDGET: ${{ vars.GARP_GEMINI_TOTAL_INPUT_BUDGET }}
+          GARP_GEMINI_TOTAL_OUTPUT_BUDGET: ${{ vars.GARP_GEMINI_TOTAL_OUTPUT_BUDGET }}
           GARP_GEMINI_INPUT_PRICE: ${{ vars.GARP_GEMINI_INPUT_PRICE }}
           GARP_GEMINI_OUTPUT_PRICE: ${{ vars.GARP_GEMINI_OUTPUT_PRICE }}
           GARP_APPROVED_ONLY: ${{ inputs.gemini_approved_only }}
@@ -531,6 +534,7 @@ jobs:
           GARP_FILING_BUDGET: ${{ inputs.filing_budget }}
           GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
           GARP_GEMINI_TIMEOUT_SECONDS: ${{ vars.GARP_GEMINI_TIMEOUT_SECONDS }}
+          GARP_GEMINI_DIAGNOSTIC_CANARY: ${{ vars.GARP_GEMINI_DIAGNOSTIC_CANARY }}
           DART_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && secrets.DART_API_KEY || '' }}
           EDINET_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && (vars.GARP_RESEARCH_DOSSIER == '1' || inputs.official_filing_requests != '') && secrets.EDINET_API_KEY || '' }}
           GARP_EDINET_INDEX_DATES: ${{ vars.GARP_EDINET_INDEX_DATES }}
@@ -556,6 +560,8 @@ jobs:
           if [[ "$GARP_DOSSIER" == 1 ]]; then extra+=(--research-dossier --prepare-filing-inputs --report-limit "$GARP_REPORT_LIMIT"); fi
           if [[ "$GARP_ENABLE_MODEL" == true ]]; then
             [[ -z "$GARP_GEMINI_MAX_COST" ]] || extra+=(--gemini-max-cost-usd "$GARP_GEMINI_MAX_COST")
+            [[ -z "$GARP_GEMINI_TOTAL_INPUT_BUDGET" ]] || extra+=(--gemini-total-input-budget "$GARP_GEMINI_TOTAL_INPUT_BUDGET")
+            [[ -z "$GARP_GEMINI_TOTAL_OUTPUT_BUDGET" ]] || extra+=(--gemini-total-output-budget "$GARP_GEMINI_TOTAL_OUTPUT_BUDGET")
             [[ -z "$GARP_GEMINI_INPUT_PRICE" ]] || extra+=(--gemini-input-price "$GARP_GEMINI_INPUT_PRICE")
             [[ -z "$GARP_GEMINI_OUTPUT_PRICE" ]] || extra+=(--gemini-output-price "$GARP_GEMINI_OUTPUT_PRICE")
             extra+=(--enable-gemini --max-documents "$GARP_MAX_DOCS" --max-requests "$GARP_MAX_CALLS"

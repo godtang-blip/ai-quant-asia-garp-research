@@ -93,7 +93,8 @@ def make_gemini(args, key, dossier):
                    input_price=getattr(args, 'gemini_input_price', None),
                    output_price=getattr(args, 'gemini_output_price', None),
                    max_cost_usd=getattr(args, 'gemini_max_cost_usd', None), dossier=dossier,
-                   timeout_seconds=getattr(args, 'gemini_timeout_seconds', DEFAULT_TIMEOUT_SECONDS))
+                   timeout_seconds=getattr(args, 'gemini_timeout_seconds', DEFAULT_TIMEOUT_SECONDS),
+                   diagnostic_canary=os.environ.get('GARP_GEMINI_DIAGNOSTIC_CANARY') == '1')
 
 
 def gemini_report(args, *, selected_tickers=None, official_observations=(), prepared_originals=None):
@@ -194,6 +195,13 @@ def gemini_report(args, *, selected_tickers=None, official_observations=(), prep
     reason = ('' if responses or hits else 'NO_SUCCESSFUL_API_RESPONSE' if status == 'FAILED' else
               'DOCUMENT_PREFLIGHT_DID_NOT_REACH_MODEL' if agent else 'PREFLIGHT_ONLY' if args.gemini_preflight
               else 'GEMINI_API_KEY_MISSING')
+    if status == 'FAILED':
+        validation_reason = next((company['provider_validation_reason'] for company in result.get('companies', [])
+                                  if company.get('provider_validation_reason')), None)
+        if validation_reason:
+            reason = validation_reason
+        elif any(company['status'] == 'MODEL_GENERATION_CANARY_FAILED' for company in result.get('companies', [])):
+            reason = 'MODEL_GENERATION_CANARY_FAILED'
     return {**report, **result, 'model': model, 'status': status, 'reason': reason,
             'api_responses_received': responses,
             'validation_status': validation, 'cache_hits': hits,

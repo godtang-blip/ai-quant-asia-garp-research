@@ -371,9 +371,19 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
 
     def response(**kwargs):
         calls.append(kwargs)
-        assert kwargs['config'].response_mime_type == 'application/json'
-        assert not kwargs['config'].tools
+        assert kwargs['model'] == 'gemini-3.5-flash-lite'
+        config = kwargs['config']
+        assert not config.tools
         if len(calls) == 1:
+            assert config.response_mime_type is None
+            return SimpleNamespace(text='OK')
+        if len(calls) == 2:
+            assert config.response_json_schema['properties']['ok']['type'] == 'boolean'
+            return SimpleNamespace(text='{"ok":true}')
+        assert config.response_mime_type == 'application/json'
+        assert config.thinking_config.thinking_level == 'LOW'
+        assert config.thinking_config.thinking_budget is None and config.temperature is None
+        if len(calls) == 3:
             raise APIError(504, {'error': {'message': 'fixture gateway timeout'}})
         observation = {'metric_label': 'Revenue', 'value_text': '1,500', 'currency': 'HKD',
                        'unit': 'thousands', 'period_start': '', 'period_end': '2024-12-31',
@@ -389,6 +399,8 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
     monkeypatch.setattr(genai, 'Client', client)
     monkeypatch.setattr('src.gemini_filing.time.sleep', lambda _: None)
     monkeypatch.setenv('GARP_GEMINI_TIMEOUT_SECONDS', '120')
+    monkeypatch.setenv('GARP_GEMINI_MODEL', 'gemini-3.5-flash-lite')
+    monkeypatch.setenv('GARP_GEMINI_DIAGNOSTIC_CANARY', '1')
     monkeypatch.setenv('EDINET_API_KEY', 'fixture-edinet')
     monkeypatch.setenv('GEMINI_API_KEY', 'fixture-model')
     monkeypatch.setenv('GARP_EDINET_INDEX_DATES', '2025-06-18')
@@ -401,7 +413,7 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
     monkeypatch.setattr('sys.argv', ['research_cycle', 'aggregate', '--plan', str(frozen), '--state', str(restored),
         '--output', str(out), '--universe', str(universe), '--vendor-export', str(comparable),
         '--research-dossier', '--prepare-filing-inputs', '--filing-budget', '1', '--report-limit', '1',
-        '--source-dir', str(tmp_path / 'private'), '--enable-gemini', '--max-requests', '2',
+        '--source-dir', str(tmp_path / 'private'), '--enable-gemini', '--max-requests', '4',
         '--gemini-max-cost-usd', '.05', '--gemini-input-price', '1', '--gemini-output-price', '2'])
     cycle.main()
     evidence = out / 'research'
@@ -417,7 +429,9 @@ def test_restored_aggregate_prepares_and_consumes_edinet_inputs(tmp_path, monkey
     assert manifest['vendor_requests'] == 0 and manifest['filing_attempts'][0]['document_retrieved']
     assert manifest['verification_states'] == {'MACHINE_RECONCILED': 1}
     assert manifest['gemini']['model_preflight'] == 'MODEL_SUPPORTS_GENERATE_CONTENT'
-    assert manifest['gemini']['api_responses_received'] == 1 and len(calls) == 2
+    assert manifest['gemini']['api_responses_received'] == 1 and len(calls) == 4
+    assert manifest['gemini']['canary_responses_received'] == 2
+    assert manifest['gemini']['extraction_responses_received'] == 1
     assert manifest['gemini']['transient_failures'] == {'HTTP_504': 1}
     assert manifest['gemini']['generation_timeout_seconds'] == 120
     model_report = json.loads((evidence / '63_gemini_evidence.json').read_text())

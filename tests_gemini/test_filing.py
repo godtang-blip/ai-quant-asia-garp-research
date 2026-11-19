@@ -287,3 +287,102 @@ def test_one_request_demo_from_pinned_snapshot(tmp_path, monkeypatch):
     assert report['observations'][0]['source_cell_id'] == 'T1R2C2'
     assert 'Analyst-reviewed observations 0' in brief.read_text()
     assert 'SOURCE_TEXT_MATCH' in brief.read_text()
+
+
+def test_gemini_35_canary_and_dossier_requests_on_the_wire(monkeypatch):
+    from google import genai
+    from httpx import MockTransport, Response
+
+    requests = []
+    outputs = iter(['OK', '{"ok":true}', '{"observations":[],"excerpts":[]}'])
+
+    def respond(request):
+        assert request.url.path.endswith('/models/gemini-3.5-flash-lite:generateContent')
+        requests.append(json.loads(request.content)['generationConfig'])
+        return Response(200, json={'candidates': [{'content': {'role': 'model',
+                          'parts': [{'text': next(outputs)}]}, 'finishReason': 'STOP'}]})
+
+    client = genai.Client
+
+    def client_with_transport(**kwargs):
+        kwargs['http_options'] = kwargs['http_options'].model_copy(
+            update={'client_args': {'transport': MockTransport(respond)}})
+        return client(**kwargs)
+
+    monkeypatch.setattr(genai, 'Client', client_with_transport)
+    agent = filing.Gemini('fixture-key', 'gemini-3.5-flash-lite', 3, 1, dossier=True)
+    assert agent.run_diagnostic_canary()
+    assert agent.extract(filing.Passage('PDF page 3', TEXT)) == {'observations': [], 'excerpts': []}
+    minimal, structured, full = requests
+    assert minimal == {'maxOutputTokens': 128}
+    assert structured['responseMimeType'] == 'application/json'
+    assert structured['responseJsonSchema'] == filing.CANARY_SCHEMA
+    assert full['thinkingConfig'] in ({'thinkingLevel': 'LOW'}, {'thinking_level': 'LOW'})
+    assert 'temperature' not in full and 'responseSchema' not in full
+    assert full['responseMimeType'] == 'application/json'
+    assert full['responseJsonSchema'] == filing.DOSSIER_SCHEMA
+    assert agent.responses_received == agent.extraction_responses_received == 1
+    assert agent.canary_responses_received == 2 and agent.requests == 3
+
+
+def test_extraction_400_keeps_safe_diagnostics_and_does_not_retry(monkeypatch):
+    agent = filing.Gemini('fixture-key', 'gemini-3.5-flash-lite', 4, 1,
+                          dossier=True, diagnostic_canary=True)
+    calls = []
+
+    def generate_content(**kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            return SimpleNamespace(text=('OK' if len(calls) == 1 else '{"ok":true}'))
+        raise APIError(400, {'error': {'status': 'INVALID_ARGUMENT',
+            'message': 'Provider echoed private-source-text and fixture-key.',
+            'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+                {'field': 'generationConfig.responseJsonSchema.properties.private-source-text',
+                 'description': 'Do not expose fixture-key or the request body.'}]}]}})
+
+    agent.client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    monkeypatch.setattr(filing, 'retrieve', lambda document: (TABLE, 'text/html'))
+    doc = filing.Filing('0700.HK', URL, '2026-03-01', ISSUER)
+    result = filing.research([doc.ticker], {doc.ticker: doc}, agent, passage_index=0)
+    company, = result['companies']
+    assert len(calls) == result['gemini_requests'] == 3
+    assert agent.responses_received == result['extraction_responses_received'] == 0
+    assert result['canary_responses_received'] == 2
+    assert [row['status'] for row in result['diagnostic_canary']] == ['PASSED', 'PASSED']
+    assert company['status'] == 'MODEL_EXTRACTION_FAILED' and company['provider_status'] == 400
+    assert company['provider_validation_reason'] == 'RESPONSE_JSON_SCHEMA_REJECTED'
+    assert company['validation_fields'] == ['response_json_schema']
+    assert company['validation_evidence'] == 'FIELD_VIOLATION'
+    assert company['provider_rpc_status'] == 'INVALID_ARGUMENT'
+    assert result['observations'] == []
+    serialized = json.dumps(result)
+    assert 'private-source-text' not in serialized and 'fixture-key' not in serialized
+    assert result['generation_configurations']['extraction']['response_json_schema_sha256']
+
+
+@pytest.mark.parametrize('budget, replies, expected_operations, expected_statuses', [
+    (2, [], [], ['BUDGET_BLOCKED']),
+    (3, [APIError(400, {'message': 'generationConfig.thinking_budget is unsupported'})],
+     ['minimal_canary'], ['FAILED']),
+    (4, ['OK', APIError(400, {'message': 'responseJsonSchema is invalid'})],
+     ['minimal_canary', 'structured_canary'], ['PASSED', 'FAILED']),
+])
+def test_failed_or_unbudgeted_canary_stops_before_dossier(budget, replies, expected_operations, expected_statuses):
+    agent = filing.Gemini('fixture-key', 'gemini-3.5-flash-lite', budget, 1)
+    calls = []
+    replies = iter(replies)
+
+    def generate_content(**kwargs):
+        config = kwargs['config']
+        calls.append('structured_canary' if config.response_json_schema else 'minimal_canary')
+        reply = next(replies)
+        if isinstance(reply, APIError):
+            raise reply
+        return SimpleNamespace(text=reply)
+
+    agent.client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    assert not agent.run_diagnostic_canary()
+    assert not agent.run_diagnostic_canary()
+    assert calls == expected_operations
+    assert [row['status'] for row in agent.canary_results] == expected_statuses
+    assert agent.responses_received == 0

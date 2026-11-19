@@ -388,12 +388,63 @@ def check_observation(proposal: dict, passage: Passage) -> dict | None:
 
 
 
+# Store only recognized reason codes and field names. API messages and field
+# descriptions can echo request content or credentials.
+VALIDATION_FIELDS = {
+    'thinking_budget': 'THINKING_BUDGET_REJECTED',
+    'thinking_level': 'THINKING_LEVEL_REJECTED',
+    'temperature': 'TEMPERATURE_REJECTED',
+    'response_json_schema': 'RESPONSE_JSON_SCHEMA_REJECTED',
+    'response_schema': 'RESPONSE_SCHEMA_REJECTED',
+    'response_mime_type': 'RESPONSE_MIME_TYPE_REJECTED',
+    'max_output_tokens': 'OUTPUT_TOKEN_LIMIT_REJECTED',
+    'tool_config': 'TOOL_CONFIG_REJECTED',
+    'tools': 'TOOLS_REJECTED',
+}
+CANARY_SCHEMA = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}}, 'required': ['ok']}
+
+
+def provider_validation(exc):
+    raw = getattr(exc, 'details', None)
+    body = raw.get('error', raw) if isinstance(raw, dict) else {}
+    details = body.get('details', []) if isinstance(body, dict) else []
+    fields = []
+    if isinstance(details, list):
+        for detail in details[:16]:
+            if not isinstance(detail, dict) or detail.get('@type') != 'type.googleapis.com/google.rpc.BadRequest':
+                continue
+            violations = detail.get('fieldViolations', [])
+            if isinstance(violations, list):
+                fields.extend(row['field'] for row in violations[:16]
+                              if isinstance(row, dict) and isinstance(row.get('field'), str))
+    message = getattr(exc, 'message', '') or ''
+    # An explicit provider field is stronger evidence than a message mention.
+    normalized = [re.sub(r'[^a-z0-9]', '', value[:4096].lower()) for value in fields]
+    recognized = [field for field in VALIDATION_FIELDS
+                  if any(field.replace('_', '') in value for value in normalized)]
+    field_evidence = bool(recognized)
+    if not recognized and isinstance(message, str):
+        normalized_message = re.sub(r'[^a-z0-9]', '', message[:4096].lower())
+        recognized = [field for field in VALIDATION_FIELDS if field.replace('_', '') in normalized_message]
+    status = getattr(exc, 'status', None)
+    reasons = [VALIDATION_FIELDS[field] for field in recognized]
+    response = {
+        'provider_validation_reason': reasons[0] if len(reasons) == 1 else
+        'MULTIPLE_GENERATION_FIELDS_REJECTED' if reasons else 'INVALID_REQUEST_UNSPECIFIED',
+        'validation_fields': recognized,
+        'validation_evidence': 'FIELD_VIOLATION' if field_evidence else 'MESSAGE_FIELD_MATCH' if recognized else 'UNSPECIFIED',
+    }
+    if status in ('INVALID_ARGUMENT', 'FAILED_PRECONDITION', 'OUT_OF_RANGE'):
+        response['provider_rpc_status'] = status
+    return response
+
+
 class Gemini:
     def __init__(self, key: str, model: str, max_requests: int, retries: int, *,
                  max_input_bytes=MAX_INPUT_BYTES, max_output_tokens=MAX_OUTPUT_TOKENS, delay=0,
                  total_input_budget=250_000, total_output_budget=9_216, cache_path=None,
                  input_price=None, output_price=None, max_cost_usd=None, dossier=False,
-                 timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
+                 timeout_seconds=DEFAULT_TIMEOUT_SECONDS, diagnostic_canary=False):
         from google import genai
         from google.genai import types
 
@@ -415,6 +466,11 @@ class Gemini:
         self.input_tokens = 0
         self.output_tokens = 0
         self.responses_received = 0
+        self.extraction_responses_received = 0
+        self.canary_responses_received = 0
+        self.diagnostic_canary = diagnostic_canary
+        self.canary_results = []
+        self.generation_configurations = {}
         self.transient_failures = {}
         self.cache_path = cache_path
         self.cache_hits = 0
@@ -473,25 +529,45 @@ class Gemini:
             raise ValueError('Gemini cache checksum mismatch')
         return self.types.GenerateContentResponse.model_validate_json(body)
 
-    def generate(self, contents: str, *, reserve_requests=0, retry_limit=None, **config):
+    def generate(self, contents: str, *, reserve_requests=0, retry_limit=None,
+                 operation='generation', output_tokens=None, **config):
         from google.genai.errors import APIError
         from httpx import TransportError
 
         prompt_bytes = len(contents.encode('utf-8'))
         if prompt_bytes > self.max_input_bytes:
             raise ValueError('Gemini input limit exceeded')
+        model_name = self.model.rsplit('/', 1)[-1]
+        profile = {}
+        is_canary = operation in {'minimal_canary', 'structured_canary'}
+        if not is_canary and re.match(r'^gemini-3(?:[.-]|$)', model_name):
+            profile['thinking_config'] = self.types.ThinkingConfig(thinking_level='LOW')
+        elif not is_canary and model_name in MODELS:
+            profile = {'temperature': 0, 'thinking_config': self.types.ThinkingConfig(thinking_budget=0)}
+        output_limit = self.max_output_tokens if output_tokens is None else min(output_tokens, self.max_output_tokens)
         options = self.types.GenerateContentConfig(
-            max_output_tokens=self.max_output_tokens, temperature=0,
-            thinking_config=self.types.ThinkingConfig(thinking_budget=0),
+            max_output_tokens=output_limit,
             automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
-            **config)
+            **profile, **config)
         serialized = options.model_dump_json()
+        record = options.model_dump(mode='json', exclude_none=True)
+        schema = record.get('response_json_schema')
+        self.generation_configurations[operation] = {
+            'config_sha256': sha256(serialized.encode()).hexdigest(),
+            'max_output_tokens': output_limit,
+            'thinking_config': record.get('thinking_config'),
+            'temperature': record.get('temperature'),
+            'response_mime_type': record.get('response_mime_type'),
+            'response_json_schema_sha256': (
+                sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest() if schema is not None else None),
+        }
         cache_key = sha256(json.dumps((SCHEMA_VERSION, self.model, self.document_sha256, contents,
                                       serialized, version('google-genai'))).encode()).hexdigest()
-        cached = self.response_cache(cache_key)
-        if cached is not None:
-            self.cache_hits += 1
-            return cached
+        if not is_canary:
+            cached = self.response_cache(cache_key)
+            if cached is not None:
+                self.cache_hits += 1
+                return cached
         # Budget admission uses a conservative, auditable UTF-8 byte reservation
         # including the request schema; billable usage comes from API metadata.
         input_budget = prompt_bytes + len(serialized.encode('utf-8'))
@@ -500,21 +576,26 @@ class Gemini:
             if self.requests + reserve_requests >= self.max_requests:
                 raise BudgetExceeded('Gemini request budget exhausted')
             if (self.input_reserved + input_budget > self.total_input_budget
-                    or self.output_reserved + self.max_output_tokens > self.total_output_budget):
+                    or self.output_reserved + output_limit > self.total_output_budget):
                 raise BudgetExceeded('Gemini token reservation exhausted')
             if self.max_cost_usd is not None:
                 reserve = ((self.input_reserved + input_budget) * self.input_price
-                           + (self.output_reserved + self.max_output_tokens) * self.output_price) / 1_000_000
+                           + (self.output_reserved + output_limit) * self.output_price) / 1_000_000
                 if reserve > self.max_cost_usd:
                     raise BudgetExceeded('Gemini cost reservation exhausted')
             self.input_reserved += input_budget
-            self.output_reserved += self.max_output_tokens
+            self.output_reserved += output_limit
             time.sleep(max(0, self.not_before - time.monotonic()))
             self.requests += 1
             self.not_before = time.monotonic() + self.delay
             try:
                 response = self.client.models.generate_content(model=self.model, contents=contents, config=options)
-                self.responses_received += 1
+                if is_canary:
+                    self.canary_responses_received += 1
+                else:
+                    self.responses_received += 1
+                    if operation == 'extraction':
+                        self.extraction_responses_received += 1
                 usage = getattr(response, 'usage_metadata', None)
                 self.input_tokens += getattr(usage, 'prompt_token_count', None) or 0
                 self.output_tokens += ((getattr(usage, 'candidates_token_count', None) or 0)
@@ -522,7 +603,8 @@ class Gemini:
                 resolved = getattr(response, 'model_version', None)
                 if resolved:
                     self.resolved_models.add(resolved)
-                self.response_cache(cache_key, response)
+                if not is_canary:
+                    self.response_cache(cache_key, response)
                 return response
             except (APIError, TransportError) as exc:
                 if isinstance(exc, APIError):
@@ -537,6 +619,43 @@ class Gemini:
                 # The next attempt rechecks request, token and spend limits before waiting.
                 self.not_before = max(self.not_before, time.monotonic() + min(2 ** attempt, 8))
         raise AssertionError('Retry loop must return or raise')
+
+    def run_diagnostic_canary(self):
+        from google.genai.errors import APIError
+        from httpx import TransportError
+
+        if self.canary_results:
+            return len(self.canary_results) == 2 and all(r['status'] == 'PASSED' for r in self.canary_results)
+        probes = (
+            ('minimal_canary', 'Reply with OK.', {}),
+            ('structured_canary', 'Return a JSON object with ok set to true.',
+             {'response_mime_type': 'application/json', 'response_json_schema': CANARY_SCHEMA}),
+        )
+        for index, (operation, prompt, config) in enumerate(probes):
+            result = {'operation': operation, 'status': 'FAILED'}
+            self.canary_results.append(result)
+            try:
+                response = self.generate(prompt, operation=operation, output_tokens=128,
+                                         retry_limit=0, reserve_requests=2 - index, **config)
+                if index == 0:
+                    valid = bool((response.text or '').strip())
+                else:
+                    decoded = json.loads(response.text or 'null')
+                    valid = isinstance(decoded, dict) and decoded.get('ok') is True
+                result['status'] = 'PASSED' if valid else 'UNEXPECTED_RESPONSE'
+            except BudgetExceeded:
+                result['status'] = 'BUDGET_BLOCKED'
+            except json.JSONDecodeError:
+                result['status'] = 'UNEXPECTED_RESPONSE'
+            except (APIError, TransportError) as exc:
+                result['error_type'] = type(exc).__name__
+                if isinstance(exc, APIError):
+                    result['provider_status'] = exc.code
+                    if exc.code == 400:
+                        result.update(provider_validation(exc))
+            if result['status'] != 'PASSED':
+                return False
+        return True
 
     def choose(self, passages: list[Passage], *, reserve_extraction=False) -> int:
         sdk = self.types
@@ -555,7 +674,7 @@ class Gemini:
                 parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'integer'}},
                                         'required': ['id']})])],
             tool_config=sdk.ToolConfig(function_calling_config=sdk.FunctionCallingConfig(
-                mode='ANY', allowed_function_names=['read_passage'])), **limits)
+                mode='ANY', allowed_function_names=['read_passage'])), operation='passage_selection', **limits)
         calls = response.function_calls or []
         if len(calls) != 1 or calls[0].name != 'read_passage' or set(calls[0].args or {}) != {'id'}:
             raise ValueError('Expected a single read_passage call')
@@ -579,7 +698,8 @@ class Gemini:
             'dates in the quote. Use empty strings for missing or ambiguous context. Do not infer or rescale '
             'values. Return an empty observations array when no number can be tied to a metric.'
             + dossier_prompt + '\n' + json.dumps(source, ensure_ascii=False),
-            response_mime_type='application/json', response_json_schema=DOSSIER_SCHEMA if self.dossier else SCHEMA)
+            operation='extraction', response_mime_type='application/json',
+            response_json_schema=DOSSIER_SCHEMA if self.dossier else SCHEMA)
         data = json.loads(response.text or '{}')
         proposals = data.get('observations') if isinstance(data, dict) else None
         if not isinstance(proposals, list) or len(proposals) > MAX_OBSERVATIONS:
@@ -693,6 +813,11 @@ def research(selected: list[str], filings: dict[str, Filing], agent: Gemini | No
             if mode == 'preflight':
                 entry['status'] = 'PRECHECK_READY'
                 continue
+            if getattr(agent, 'diagnostic_canary', False):
+                stage = 'MODEL_GENERATION_CANARY'
+                if not agent.run_diagnostic_canary():
+                    entry['status'] = 'MODEL_GENERATION_CANARY_FAILED'
+                    continue
             stage = 'MODEL_SELECTION'
             if passage_index is not None and passage_index >= len(passages):
                 entry['status'] = 'PASSAGE_INDEX_NOT_FOUND'
@@ -784,10 +909,16 @@ def research(selected: list[str], filings: dict[str, Filing], agent: Gemini | No
             code = getattr(exc, 'code', None)
             if type(code) is int:
                 entry['provider_status'] = code
+                if code == 400:
+                    entry.update(provider_validation(exc))
     report['gemini_requests'] = agent.requests if agent else 0
     if agent:
         report['generation_timeout_seconds'] = getattr(agent, 'timeout_seconds', None)
         report['transient_failures'] = getattr(agent, 'transient_failures', {})
+        report['generation_configurations'] = getattr(agent, 'generation_configurations', {})
+        report['extraction_responses_received'] = getattr(agent, 'extraction_responses_received', 0)
+        report['diagnostic_canary'] = getattr(agent, 'canary_results', [])
+        report['canary_responses_received'] = getattr(agent, 'canary_responses_received', 0)
     report['gemini_resolved_models'] = sorted(agent.resolved_models) if agent else []
     return report
 

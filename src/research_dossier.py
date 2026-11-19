@@ -190,6 +190,8 @@ def write_markdown(path, dossier):
                          f'{cell(row["verification_status"])} · {cell(row["source_url"])}.')
     execution = dossier['gemini']['execution']
     lines.extend(['', '## Gemini findings', f'- Execution · {cell(execution.get("status")) or "See checklist"}'])
+    if execution.get('provider_validation_reason'):
+        lines.append(f'- Request validation · {cell(execution["provider_validation_reason"])}.')
     for row in dossier['gemini']['observations'] + dossier['gemini']['excerpts']:
         lines.append(f'- {cell(row.get("metric_label") or row.get("category"))} · {cell(row["evidence_state"])}. '
                      f'{cell(row.get("classification_status") or row.get("verification_status"))}. '
