@@ -331,14 +331,14 @@ jobs:
               result = json.loads(manifest.read_text())
               assert result['trade_orders'] == 'NONE'
               assert result['predictive_validation'] == 'NOT_PERFORMED'
-              print('Financial coverage:', result['financial_status'])
+              print('Run status:', result['run_status'])
               print('Measured outcomes:', json.dumps(result['outcomes'], ensure_ascii=False))
               print('Gemini:', result['gemini']['status'], 'responses:', result['gemini'].get('api_responses_received', 0))
               assert result['outcomes']['research_report_files']['succeeded'] == 2
-              if result['financial_status'] != 'SELECTED_UNIVERSE_FETCHED':
-                  print('::warning::Partial financial coverage. See 60_financial_coverage.csv')
+              if result['run_status'] in {'PARTIAL_PROVIDER_FAILURE', 'BLOCKED_EXTERNAL_DEPENDENCY'}:
+                  print('::warning::Provider coverage incomplete for the selected scope. See 60_financial_coverage.csv')
               if not Path('outputs/34_research_quality_v05.json').is_file():
-                  assert result['financial_status'] == 'PARTIAL_OR_FAILED'
+                  assert result['run_status'] == 'BLOCKED_EXTERNAL_DEPENDENCY'
                   raise SystemExit(0)
           q=json.loads(Path('outputs/34_research_quality_v05.json').read_text())
           assert q['trade_orders']=='NONE'
