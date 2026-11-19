@@ -135,7 +135,10 @@ def connect_checkpoint(path, plan, shard, *, create=False):
                                [(ticker,) for ticker in spec['tickers']])
             elif [item[0] for item in saved] != [checksum(scope)]:
                 raise ValueError(f'Incompatible checkpoint: {shard}')
-        validate_checkpoint(db, spec['tickers'])
+        with db:
+            # Pin one read snapshot for all integrity checks while workers commit.
+            db.execute('BEGIN')
+            validate_checkpoint(db, spec['tickers'])
     except (sqlite3.Error, ValueError):
         db.close()
         raise

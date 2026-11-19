@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+from threading import Barrier, get_ident
 
 import pandas as pd
 import pytest
@@ -80,10 +81,24 @@ def test_interrupted_attempt_and_success_restore_without_refetch(tmp_path):
     assert cycle.summaries(plan, restored)[1][interrupted[0]]['attempt_count'] == 2
 
 
-def test_concurrent_local_workers_claim_each_ticker_once(tmp_path):
+def test_concurrent_local_workers_claim_each_ticker_once(tmp_path, monkeypatch):
     _, plan = make_plan(tmp_path, 50, shard_size=30)
     shard, spec = next(iter(plan['shards'].items()))
     state = tmp_path / 'state'
+    path = cycle.checkpoint_path(state, shard)
+    assert not path.exists()
+    opened = Barrier(3)
+    test_thread = get_ident()
+    sqlite_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        db = sqlite_connect(*args, **kwargs)
+        # All workers open the new file before any creates the tables.
+        if get_ident() != test_thread:
+            opened.wait(timeout=10)
+        return db
+
+    monkeypatch.setattr(sqlite3, 'connect', connect)
     called = []
 
     def vendor(ticker):
@@ -98,6 +113,52 @@ def test_concurrent_local_workers_claim_each_ticker_once(tmp_path):
         for future in futures:
             future.result()
     assert sorted(called) == spec['tickers']
+    with closing(cycle.connect_checkpoint(path, plan, shard)) as db:
+        attempts = db.execute('SELECT * FROM attempts ORDER BY ticker').fetchall()
+        assert [(row['ticker'], row['attempt']) for row in attempts] == [
+            (ticker, 1) for ticker in spec['tickers']]
+        assert len({row['reservation'] for row in attempts}) == len(spec['tickers'])
+        assert all(row['completed_at'] and row['outcome'] == 'SUCCESS' for row in attempts)
+        work = db.execute('SELECT * FROM work ORDER BY ticker').fetchall()
+        assert [(row['ticker'], row['status'], json.loads(row['payload'])) for row in work] == [
+            (ticker, 'SUCCESS', financial(ticker)) for ticker in spec['tickers']]
+
+
+def test_checkpoint_validation_uses_one_snapshot_during_worker_commit(tmp_path, monkeypatch):
+    _, plan = make_plan(tmp_path)
+    shard, spec = next(iter(plan['shards'].items()))
+    state = tmp_path / 'state'
+    path = cycle.checkpoint_path(state, shard)
+    with closing(cycle.connect_checkpoint(path, plan, shard, create=True)) as db:
+        # Allow the writer to commit even while validation holds a read transaction.
+        assert db.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        reader_thread = get_ident()
+        sqlite_connect = sqlite3.connect
+
+        class ValidationReader(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if sql.startswith('SELECT ticker, attempt FROM attempts'):
+                    # Commit the claim and completion after validation reads work,
+                    # before it reads attempts.
+                    worker = executor.submit(cycle.run_shard, plan, shard, state, 1, 0,
+                                             fetch=financial, clock=lambda: NOW)
+                    worker.result(timeout=10)
+                return super().execute(sql, parameters)
+
+        def connect(*args, **kwargs):
+            if get_ident() == reader_thread:
+                kwargs['factory'] = ValidationReader
+            return sqlite_connect(*args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, 'connect', connect)
+        with closing(cycle.connect_checkpoint(path, plan, shard, create=True)) as db:
+            assert not db.in_transaction
+            attempts = db.execute('SELECT * FROM attempts').fetchall()
+            assert [(row['ticker'], row['attempt'], row['outcome']) for row in attempts] == [
+                (spec['tickers'][0], 1, 'SUCCESS')]
+
 
 
 def test_corruption_wrong_snapshot_and_independent_fork_are_rejected(tmp_path):
@@ -115,6 +176,10 @@ def test_corruption_wrong_snapshot_and_independent_fork_are_rejected(tmp_path):
         db.execute("UPDATE work SET payload='{}' WHERE payload IS NOT NULL")
     with pytest.raises(ValueError, match='checksum'):
         cycle.restore(plan, first, tmp_path / 'broken')
+    with sqlite3.connect(cycle.checkpoint_path(fork, shard)) as db:
+        db.execute('DELETE FROM attempts')
+    with pytest.raises(ValueError, match='Checkpoint attempt history mismatch'):
+        cycle.connect_checkpoint(cycle.checkpoint_path(fork, shard), plan, shard)
     (plan_path / 'plan.json').write_text('{}')
     with pytest.raises(ValueError, match='checksum'):
         cycle.load_plan(plan_path)
