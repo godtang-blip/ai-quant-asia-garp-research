@@ -107,6 +107,10 @@ def compute_scores(data: pd.DataFrame) -> pd.DataFrame:
                 available_weight+=w*number(r[f'{cat}_coverage'])
         coverage=available_weight
         cov.append(round(coverage,3))
+        # A weighted sum that is exactly 65% can land just below it in binary.
+        meets_score_coverage = coverage >= .65 or math.isclose(
+            coverage, .65, rel_tol=0, abs_tol=1e-12
+        )
         fl=[]
         if r.get('peer_group','') in ('unclassified','other',''):
             fl.append('SECTOR_UNCLASSIFIED_REQUIRES_ANALYST_MAPPING')
@@ -118,10 +122,10 @@ def compute_scores(data: pd.DataFrame) -> pd.DataFrame:
             fl.append('V021_DATA_WARNING')
         if not (math.isfinite(number(r.get('forward_pe'))) or math.isfinite(number(r.get('price_to_sales')))):
             fl.append('NO_VALUATION_REFERENCE')
-        if coverage < .65:
+        if not meets_score_coverage:
             fl.append('INSUFFICIENT_METRIC_COVERAGE')
         # Combined data score used only to prioritize manual due diligence.
-        score = sum_score / coverage if coverage >= .65 else math.nan
+        score = sum_score / coverage if meets_score_coverage else math.nan
         # apply mild proportional coverage penalty instead of propping sparse
         # coverage up to a deceptive top score.
         score *= (0.80+0.20*coverage) if math.isfinite(score) else 1
