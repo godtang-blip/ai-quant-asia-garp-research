@@ -16,6 +16,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--universe', type=Path, default=Path('data/universe.csv'))
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--per-region', type=int, default=0, choices=range(0, 151),
+                        metavar='0–150', help='Optional supplemental results per market from the vendor screener')
     parser.add_argument('--china-only', action='store_true', help='Run mainland China listings sources only')
     parser.add_argument('--china-benchmarks', type=Path,
                         help='Optional dated, scope-matched official China board CSV')
@@ -26,7 +28,7 @@ def main():
     if args.china_only and os.environ.get('GARP_CHINA_PROVIDER_PROBE') == '1':
         probes = probe_providers(os.environ.get('GARP_EASTMONEY_PROBE_ALLOWED') == '1')
         pd.DataFrame(probes).to_csv(args.output/'51_china_provider_probe.csv', index=False)
-    universe, logs = discover_five_markets(_read_curated(args.universe), 'all5_official', per_region=0,
+    universe, logs = discover_five_markets(_read_curated(args.universe), 'all5_official', per_region=args.per_region,
                                           security_master=True, china_only=args.china_only,
                                           provisional_inventory=provisional)
     pd.DataFrame(provisional, columns=['ticker', 'source_asof', 'source', 'classification',

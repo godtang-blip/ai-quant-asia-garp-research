@@ -16,7 +16,9 @@ import pandas as pd
 from .discovery_review import candidate_review
 from .filing_evidence import SOURCES, read_export, reconcile
 from .gemini_filing import Gemini, plan, research
+from .industry_classification import load_registry
 from .official_filings import acquire_sources, ATTACHMENT_HOSTS
+from .scoring_v03 import SUBMETRICS
 from .v031 import FundamentalsUnavailable, _fetch_vendor
 from .v051 import run as run_legacy
 
@@ -90,7 +92,9 @@ def gemini_report(args):
         blockers = ['APPROVED_SOURCES_MISSING']
         if args.enable_gemini and not key:
             blockers.append('GEMINI_API_KEY_MISSING')
-        return {**report, 'status': 'NOT_TESTED', 'reason': blockers[0], 'blockers': blockers}
+        return {**report, 'status': 'NOT_TESTED', 'reason': blockers[0], 'blockers': blockers,
+                'validation_status': 'NOT_TESTED_API_KEY_MISSING' if not key and args.enable_gemini
+                else 'NOT_TESTED_APPROVALS_MISSING'}
     candidates = args.output / '01_all_research_candidates.csv'
     ledger = args.output / '18_evidence_ledger.csv'
     if not args.gemini_approved_only and (not candidates.is_file() or not ledger.is_file()):
@@ -103,21 +107,34 @@ def gemini_report(args):
     if not filings:
         return {**report, 'status': 'NOT_TESTED', 'reason': 'NO_APPROVED_DATED_FILING'}
     agent = Gemini(key, model, args.max_requests, 1, max_input_bytes=args.gemini_input_bytes,
-                   max_output_tokens=args.gemini_output_tokens, delay=1) if args.enable_gemini and key else None
+                   max_output_tokens=args.gemini_output_tokens, delay=1,
+                   cache_path=getattr(args, 'gemini_cache', None),
+                   total_input_budget=getattr(args, 'gemini_total_input_budget', 250000),
+                   total_output_budget=getattr(args, 'gemini_total_output_budget', 9216),
+                   input_price=getattr(args, 'gemini_input_price', None),
+                   output_price=getattr(args, 'gemini_output_price', None)) if args.enable_gemini and key else None
     mode = 'live' if agent else 'preflight' if args.gemini_preflight else 'dry-run'
     result = research(selected, filings, agent, mode=mode, replay_dir=args.gemini_replay_dir)
     responses = agent.responses_received if agent else 0
+    hits = getattr(agent, 'cache_hits', 0)
     status = ('LIVE_RESPONSE_RECEIVED' if responses else 'FAILED' if result['gemini_requests']
-              else 'NOT_TESTED')
-    reason = ('' if responses else 'NO_SUCCESSFUL_API_RESPONSE' if status == 'FAILED' else
+              else 'CACHE_REPLAY' if hits else 'NOT_TESTED')
+    validation = ('NOT_TESTED_API_KEY_MISSING' if args.enable_gemini and not key else
+                  'NOT_TESTED_NETWORK_BLOCKED' if any(company['status'] == 'NOT_TESTED_NETWORK_BLOCKED'
+                                                       for company in result.get('companies', [])) and not responses
+                  else status)
+    reason = ('' if responses or hits else 'NO_SUCCESSFUL_API_RESPONSE' if status == 'FAILED' else
               'DOCUMENT_PREFLIGHT_DID_NOT_REACH_MODEL' if agent else 'PREFLIGHT_ONLY' if args.gemini_preflight
               else 'GEMINI_API_KEY_MISSING')
     return {**result, 'model': model, 'status': status, 'reason': reason,
             'api_responses_received': responses,
+            'validation_status': validation, 'cache_hits': hits,
+            'input_reservation_units': getattr(agent, 'input_reserved', 0),
+            'output_tokens_reserved': getattr(agent, 'output_reserved', 0),
             'sdk_version': version('google-genai') if agent else None,
             'reported_input_tokens': agent.input_tokens if agent else 0,
             'reported_output_tokens': agent.output_tokens if agent else 0,
-            'estimated_cost_usd': None}
+            'estimated_cost_usd': getattr(agent, 'estimated_cost', None)}
 
 
 def rate(numerator, denominator):
@@ -149,7 +166,9 @@ def produce_reports(output, ranked, stages, findings, limit):
             ranked.loc[ranked.ticker.eq(ticker), 'filing_status'] = 'BLOCKED'
     ranked['verified_export_issuer_key'] = ranked.ticker.map(issuer_ids)
     shortlist = ranked[stage.eq('MEMO_READY') & ranked.filing_status.ne('BLOCKED')].copy()
-    dedup_key = shortlist.verified_export_issuer_key.fillna('TICKER:' + shortlist.ticker)
+    approved_ids = shortlist.get('classification_issuer_id', pd.Series('', index=shortlist.index))
+    dedup_key = ('ISSUER:' + approved_ids).where(approved_ids.ne(''), shortlist.verified_export_issuer_key)
+    dedup_key = dedup_key.fillna('TICKER:' + shortlist.ticker)
     shortlist = shortlist[~dedup_key.duplicated()].head(limit)
     shortlist.to_csv(output / '65_five_market_shortlist.csv', index=False)
     lines = ['# Asia GARP v0.6 후보 검토', '',
@@ -183,15 +202,31 @@ def run(args):
     output.mkdir(parents=True, exist_ok=True)
     if (output / '11_discovery_universe.csv').exists():
         raise ValueError('Use a new output directory and reuse the external checkpoint')
+    if args.snapshot_csv:
+        metadata = pd.read_csv(args.snapshot_csv, dtype=str, keep_default_na=False,
+                               usecols=lambda field: field in {'retrieved_at_utc', 'provider_financial_period_end'})
+        for column in metadata:
+            timestamps = metadata.loc[metadata[column].ne(''), column]
+            if any(date.fromisoformat(value[:10]) > args.asof_date for value in timestamps):
+                raise ValueError(f'Snapshot {column} contains observations after the as-of date')
     budget = FinancialBudget(args.checkpoint or output / '.financial.sqlite', args.asof_date,
                              args.financial_budget, args.delay_seconds)
     failed = pd.DataFrame()
     try:
         print('Discovery and financial screening', flush=True)
+        frozen = None
+        if args.frozen_cycle_plan:
+            plan = json.loads(args.frozen_cycle_plan.read_text())
+            discovered = pd.DataFrame(plan['discovered'])
+            discovered['is_new_discovery'] = discovered['is_new_discovery'].map(
+                lambda value: str(value).lower() in {'true', '1'})
+            frozen = (discovered, pd.DataFrame(plan['discovery_sources']),
+                      {ticker for shard in plan['shards'].values() for ticker in shard['tickers']})
+        registry = load_registry(args.classification, args.asof_date)
         run_legacy(args.universe, output, 0 if args.full_universe else args.max_symbols,
                    args.discover_mode, args.fx_mode, 0, args.snapshot_csv, args.per_region,
                    args.evidence_mode, args.evidence_limit, args.asof_date, markets=args.markets,
-                   fetch_vendor=budget)
+                   fetch_vendor=budget, frozen_discovery=frozen, classification=registry)
     except FundamentalsUnavailable as exc:
         failed = exc.attempts
     finally:
@@ -204,9 +239,10 @@ def run(args):
     live_primary, filing_attempts = acquire_sources(
         args.official_filing_requests, args.opendart_requests, args.source_dir, args.asof_date,
         args.filing_budget, args.delay_seconds,
-        {name: os.environ.get(name, '').strip() for name in ('DART_API_KEY', 'EDINET_API_KEY')})
+        {name: os.environ.get(name, '').strip() for name in ('DART_API_KEY', 'EDINET_API_KEY')},
+        replay_dir=args.official_replay_dir)
     primary = [dict(row, acquisition='OPERATOR_EXPORT') for row in read_export(args.primary_export)]
-    primary += [dict(row, acquisition='OFFICIAL_LIVE') for row in live_primary]
+    primary += [{'acquisition': 'OFFICIAL_LIVE', **row} for row in live_primary]
     vendor = read_export(args.vendor_export)
     audit = reconcile(primary, vendor, args.source_dir or output, args.asof_date, args.tolerance)
     pd.DataFrame(audit, columns=list(dict.fromkeys(
@@ -215,7 +251,10 @@ def run(args):
     registry = [{'venue': venue, 'market': market, 'publisher': publisher,
                  'access': ('REGISTERED_API' if venue in {'KRX', 'JPX'} else
                             'APPROVED_OFFICIAL_ATTACHMENT' if venue in ATTACHMENT_HOSTS else 'AUTHORIZED_NORMALIZED_EXPORT'),
-                 'status': 'LIVE_OBSERVATIONS' if any(row['venue'] == venue for row in live_primary) else
+                 'status': 'LIVE_OBSERVATIONS' if any(row.get('venue') == venue and row['acquisition'] == 'OFFICIAL_LIVE'
+                                                       for row in primary) else
+                 'REPLAY_OBSERVATIONS' if any(row.get('venue') == venue and row['acquisition'] == 'OFFICIAL_REPLAY'
+                                             for row in primary) else
                  'EXPORT_SUPPLIED' if any(row.get('venue') == venue for row in primary) else
                  'SEE_FILING_ATTEMPTS' if any(row['venue'] == venue for row in filing_attempts) else 'NOT_CONFIGURED'}
                 for venue, (market, publisher, _) in SOURCES.items()]
@@ -251,13 +290,21 @@ def run(args):
         previous = read_table(args.previous_artifacts, '01_all_research_candidates.csv')
         if previous.empty:
             raise ValueError('Previous artifacts do not contain screening rows')
+        metrics = [field for group in SUBMETRICS.values() for field in group]
         fields = ['ticker', 'lifecycle', 'review_reasons', 'v031_research_eligible',
-                  'cross_industry_score_100', 'operating_margin', 'roe']
-        exclusions = candidate_review(previous)[fields].merge(
+                  'cross_industry_score_100', 'source_url', 'retrieved_at_utc', *metrics]
+        prior = candidate_review(previous)
+        exclusions = prior[[field for field in fields if field in prior]].merge(
             exclusions, on='ticker', how='outer', suffixes=('_before', ''), validate='one_to_one')
         blocked = set(stages.loc[stages.analyst_decision.isin(['REJECTED', 'ON_HOLD']), 'ticker']) if not stages.empty else set()
-        source_backed = {row['ticker'] for row in audit if row['status'] == 'MACHINE_RECONCILED'}
-        source_backed -= {row['ticker'] for row in audit if row['status'] == 'BLOCKED'}
+        evidence_links = {}
+        for row in audit:
+            if row['status'] == 'MACHINE_RECONCILED':
+                evidence_links.setdefault(row['ticker'], set()).add(
+                    f"{row['metric']}:{row['source_sha256']}:{row['source_url']}")
+        source_backed = set(evidence_links) - {row['ticker'] for row in audit if row['status'] == 'BLOCKED'}
+        exclusions['recovery_reconciled_observations'] = exclusions.ticker.map(
+            lambda ticker: '|'.join(sorted(evidence_links.get(ticker, ()))))
         exclusions['recovery_review_pending'] = (
             exclusions.review_reasons_before.eq('MISSING_OR_INSUFFICIENT_DATA')
             & exclusions.v031_research_eligible.eq(True)
@@ -274,12 +321,17 @@ def run(args):
                      if row['acquisition'] == 'OFFICIAL_LIVE' and row['status'] == 'MACHINE_RECONCILED'}
     run_manifest = {
         'revision': '0.6', 'asof_date': str(args.asof_date),
+        'run_status': ('FAILED_INTERNAL_ERROR' if report_error else
+                       'BLOCKED_EXTERNAL_DEPENDENCY' if ranked.empty else
+                       'PARTIAL_PROVIDER_FAILURE' if ranked.fetch_error.ne('').any() else 'BOUNDED_RUN_COMPLETE'),
         'generated_utc': datetime.now(timezone.utc).isoformat(),
         'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
         'financial_status': 'PARTIAL_OR_FAILED' if ranked.empty or ranked.fetch_error.ne('').any()
         or (args.full_universe is False and len(universe[universe.market.isin(args.markets)]) > len(ranked))
         else 'SELECTED_UNIVERSE_FETCHED',
         'coverage': coverage,
+        'industry_confidence_counts': dict(Counter((ranked if failed.empty else failed).get('industry_confidence', []))),
+        'instrument_class_counts': dict(Counter((ranked if failed.empty else failed).get('instrument_class', []))),
         'failed_fetch_reasons': dict(Counter(value for value in (failed if ranked.empty else ranked)
                                              .get('fetch_error', []) if value)), 'discovery_sources': logs.to_dict('records'),
         'filing_attempts': filing_attempts,
@@ -312,7 +364,7 @@ def run(args):
     return run_manifest
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--universe', type=Path, default=Path('data/universe.csv'))
     parser.add_argument('--output', type=Path, default=Path('outputs'))
@@ -323,6 +375,8 @@ def main():
     parser.add_argument('--per-region', type=int, default=90)
     parser.add_argument('--evidence-limit', type=int, default=8)
     parser.add_argument('--snapshot-csv', type=Path)
+    parser.add_argument('--frozen-cycle-plan', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--classification', type=Path)
     parser.add_argument('--max-symbols', type=int, default=25)
     parser.add_argument('--full-universe', action='store_true')
     parser.add_argument('--financial-budget', type=int, default=25)
@@ -331,6 +385,7 @@ def main():
     parser.add_argument('--asof-date', type=date.fromisoformat, default=datetime.now(timezone.utc).date())
     parser.add_argument('--opendart-requests', type=Path)
     parser.add_argument('--official-filing-requests', type=Path)
+    parser.add_argument('--official-replay-dir', type=Path)
     parser.add_argument('--filing-budget', type=int, choices=range(11), default=0)
     parser.add_argument('--primary-export', type=Path)
     parser.add_argument('--vendor-export', type=Path)
@@ -343,6 +398,13 @@ def main():
     parser.add_argument('--gemini-approved-only', action='store_true',
                         help='Use explicitly dated approvals independently of screening for a source canary')
     parser.add_argument('--gemini-replay-dir', type=Path)
+    parser.add_argument('--gemini-cache', type=Path)
+    parser.add_argument('--gemini-total-input-budget', type=int, default=250000)
+    parser.add_argument('--gemini-total-output-budget', type=int, default=9216)
+    parser.add_argument('--gemini-input-price', type=float,
+                        help='Operator-confirmed USD per million input tokens')
+    parser.add_argument('--gemini-output-price', type=float,
+                        help='Operator-confirmed USD per million output tokens')
     parser.add_argument('--model', default=os.environ.get('GARP_GEMINI_MODEL') or DEFAULT_MODEL)
     parser.add_argument('--gemini-input-bytes', type=int, default=24000)
     parser.add_argument('--gemini-output-tokens', type=int, default=1024)
@@ -350,7 +412,7 @@ def main():
     parser.add_argument('--max-documents', type=int, choices=range(1, 4), default=3)
     parser.add_argument('--max-requests', type=int, choices=range(1, 10), default=6)
     parser.add_argument('--report-limit', type=int, choices=range(1, 6), default=5)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     today = datetime.now(timezone.utc).date()
     if args.delay_seconds < 0.7 or args.max_symbols < 1 or args.financial_budget < 0:
         parser.error('Require delay >= 0.7, max-symbols >= 1 and financial-budget >= 0')
@@ -358,9 +420,21 @@ def main():
         parser.error('Historical dates require a dated vendor snapshot. Future dates are invalid.')
     if not 1 <= args.gemini_input_bytes <= 24000 or not 1 <= args.gemini_output_tokens <= 1024:
         parser.error("Gemini caps are 24000 input bytes and 1024 output tokens per request")
+    if not 1 <= args.gemini_total_input_budget <= 250000 or not 1 <= args.gemini_total_output_budget <= 9216:
+        parser.error('Gemini run caps are 250000 input reservation units and 9216 output tokens')
+    if args.gemini_cache and args.gemini_cache.resolve().is_relative_to(args.output.resolve()):
+        parser.error('The Gemini cache must be outside research artifacts')
     if (args.opendart_requests or args.official_filing_requests) and (not args.source_dir or args.source_dir.resolve().is_relative_to(args.output.resolve())):
         parser.error('Live filing acquisition requires a private --source-dir outside --output')
-    run(args)
+    previous_run = (args.output / '11_discovery_universe.csv').exists()
+    try:
+        run(args)
+    except Exception as exc:
+        if not previous_run and args.output.is_dir() and not (args.output / '67_v06_run_manifest.json').exists():
+            write_json(args.output, '67_v06_run_manifest.json',
+                       {'revision': '0.6', 'run_status': 'FAILED_INTERNAL_ERROR',
+                        'error_type': type(exc).__name__, 'trade_orders': 'NONE'})
+        raise
 
 
 if __name__ == '__main__':

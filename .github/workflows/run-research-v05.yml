@@ -2,6 +2,20 @@ name: Asia GARP v0.6 | 5 Markets + Evidence + Valuation (Research Only)
 on:
   workflow_dispatch:
     inputs:
+      cycle_mode:
+        description: 'Optional durable research cycle action'
+        type: choice
+        default: off
+        options: ['off', 'initialize', 'batch', 'aggregate']
+      cycle_state:
+        description: 'Workflow run ID that initialized the immutable cycle'
+        type: string
+        default: ''
+      cycle_market:
+        description: 'Market filter for the next durable cycle dispatch'
+        type: choice
+        default: All
+        options: ['All', 'China', 'Hong Kong', 'Japan', 'Korea', 'Taiwan']
       discovery_only:
         description: 'Fetch listings and publish diagnostics without financial analysis'
         type: boolean
@@ -100,11 +114,13 @@ on:
         options: ['live', 'off']
 permissions:
   contents: read
+  actions: read
 concurrency:
-  group: asia-garp-v051-research-${{ github.ref }}
+  group: asia-garp-research-${{ inputs.cycle_state || github.ref }}
   cancel-in-progress: false
 jobs:
   integrated_research:
+    if: ${{ inputs.cycle_mode == 'off' || inputs.cycle_mode == 'initialize' }}
     runs-on: ubuntu-latest
     timeout-minutes: 110
     steps:
@@ -168,7 +184,7 @@ jobs:
         if: ${{ steps.listing_bundle_checkout.outcome == 'failure' }}
         run: printf '%s\n' '::warning::Private listing checkout failed. Continuing without the private input.'
       - name: Integrated three-stage research / no orders
-        if: ${{ !inputs.discovery_only }}
+        if: ${{ !inputs.discovery_only && inputs.cycle_mode == 'off' }}
         env:
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           EDINET_API_KEY: ${{ !inputs.legacy_research && inputs.official_filing_requests != '' && secrets.EDINET_API_KEY || '' }}
@@ -179,9 +195,14 @@ jobs:
           GARP_INPUT_GEMINI_APPROVALS: ${{ inputs.gemini_approved_sources }}
           GARP_INPUT_GEMINI_MAX_DOCUMENTS: ${{ inputs.gemini_max_documents }}
           GARP_INPUT_GEMINI_MAX_REQUESTS: ${{ inputs.gemini_max_requests }}
+          GARP_GEMINI_TOTAL_INPUT_BUDGET: ${{ vars.GARP_GEMINI_TOTAL_INPUT_BUDGET }}
+          GARP_GEMINI_TOTAL_OUTPUT_BUDGET: ${{ vars.GARP_GEMINI_TOTAL_OUTPUT_BUDGET }}
+          GARP_GEMINI_INPUT_PRICE: ${{ vars.GARP_GEMINI_INPUT_PRICE }}
+          GARP_GEMINI_OUTPUT_PRICE: ${{ vars.GARP_GEMINI_OUTPUT_PRICE }}
           GARP_INPUT_FILING_REQUESTS: ${{ inputs.official_filing_requests }}
           GARP_INPUT_FILING_BUDGET: ${{ inputs.filing_budget }}
           GARP_INPUT_VENDOR_EXPORT: ${{ vars.GARP_FILING_VENDOR_EXPORT }}
+          GARP_INPUT_CLASSIFICATION: ${{ vars.GARP_CLASSIFICATION_REGISTRY }}
           GARP_INPUT_DART_REQUESTS: ${{ vars.GARP_OPENDART_REQUESTS }}
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
@@ -203,6 +224,7 @@ jobs:
           GARP_INPUT_FULL: ${{ inputs.full_universe }}
           GARP_INPUT_FINANCIAL_BUDGET: ${{ inputs.financial_budget }}
           GARP_INPUT_MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          GARP_INPUT_MARKET: ${{ inputs.cycle_market }}
         run: |
           engine=(python -m src.v06)
           extra=(--report-limit "$GARP_INPUT_REPORT_LIMIT" --financial-budget "$GARP_INPUT_FINANCIAL_BUDGET" --checkpoint "$RUNNER_TEMP/garp-financial.sqlite")
@@ -224,7 +246,10 @@ jobs:
               printf '%s\n' "$path"
             }
             extra+=(--filing-budget "$GARP_INPUT_FILING_BUDGET" --source-dir "$RUNNER_TEMP/garp-filing-originals")
-            for setting in GARP_INPUT_FILING_REQUESTS GARP_INPUT_DART_REQUESTS GARP_INPUT_VENDOR_EXPORT GARP_INPUT_GEMINI_APPROVALS; do
+            if [[ -n "$GARP_INPUT_MARKET" && "$GARP_INPUT_MARKET" != All ]]; then
+              extra+=(--markets "$GARP_INPUT_MARKET")
+            fi
+            for setting in GARP_INPUT_FILING_REQUESTS GARP_INPUT_DART_REQUESTS GARP_INPUT_VENDOR_EXPORT GARP_INPUT_GEMINI_APPROVALS GARP_INPUT_CLASSIFICATION; do
               [[ -n "${!setting}" ]] || continue
               path="$(checked_csv "${!setting}")" || {
                 printf '::error::%s must point to a CSV inside the checkout.\n' "$setting"
@@ -235,11 +260,17 @@ jobs:
                 GARP_INPUT_DART_REQUESTS) extra+=(--opendart-requests "$path");;
                 GARP_INPUT_VENDOR_EXPORT) extra+=(--vendor-export "$path");;
                 GARP_INPUT_GEMINI_APPROVALS) extra+=(--approved-sources "$path");;
+                GARP_INPUT_CLASSIFICATION) extra+=(--classification "$path");;
               esac
             done
             if [[ "$GARP_INPUT_GEMINI" == true ]]; then
               extra+=(--enable-gemini --max-documents "$GARP_INPUT_GEMINI_MAX_DOCUMENTS" --max-requests "$GARP_INPUT_GEMINI_MAX_REQUESTS")
+              extra+=(--gemini-cache "$RUNNER_TEMP/garp-gemini.sqlite")
               [[ -z "$GARP_GEMINI_MODEL" ]] || extra+=(--model "$GARP_GEMINI_MODEL")
+              [[ -z "$GARP_GEMINI_TOTAL_INPUT_BUDGET" ]] || extra+=(--gemini-total-input-budget "$GARP_GEMINI_TOTAL_INPUT_BUDGET")
+              [[ -z "$GARP_GEMINI_TOTAL_OUTPUT_BUDGET" ]] || extra+=(--gemini-total-output-budget "$GARP_GEMINI_TOTAL_OUTPUT_BUDGET")
+              [[ -z "$GARP_GEMINI_INPUT_PRICE" ]] || extra+=(--gemini-input-price "$GARP_GEMINI_INPUT_PRICE")
+              [[ -z "$GARP_GEMINI_OUTPUT_PRICE" ]] || extra+=(--gemini-output-price "$GARP_GEMINI_OUTPUT_PRICE")
               if [[ "$GARP_INPUT_GEMINI_APPROVED_ONLY" == true ]]; then
                 extra+=(--gemini-approved-only)
               fi
@@ -258,8 +289,12 @@ jobs:
             --delay-seconds 0.7 \
             --output outputs
       - name: Listing discovery only
-        if: ${{ inputs.discovery_only }}
+        if: ${{ inputs.discovery_only || inputs.cycle_mode == 'initialize' }}
         env:
+          GARP_CYCLE_INITIALIZE: ${{ inputs.cycle_mode == 'initialize' }}
+          GARP_CYCLE_DISCOVERY_SUPPLEMENT: ${{ inputs.per_region }}
+          GARP_CYCLE_EXPLICIT: ${{ inputs.full_universe }}
+          GARP_CYCLE_ARTIFACTS: ${{ vars.GARP_ALLOW_FINANCIAL_CHECKPOINT_ARTIFACTS }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           KRX_BASE_DATE: ${{ vars.KRX_BASE_DATE }}
@@ -274,13 +309,19 @@ jobs:
           GARP_EASTMONEY_PROBE_ALLOWED: ${{ vars.GARP_EASTMONEY_PROBE_ALLOWED }}
           GARP_CHINA_ONLY: ${{ inputs.china_only }}
         run: |
+          if [[ "$GARP_CYCLE_INITIALIZE" == true && ( "$GARP_CYCLE_EXPLICIT" != true || "$GARP_CYCLE_ARTIFACTS" != 1 || "$GARP_CHINA_ONLY" == true ) ]]; then
+            echo 'Cycle initialization requires full_universe, approved artifacts, and five-market discovery.'
+            exit 2
+          fi
           if [[ "$GARP_CHINA_ONLY" == true ]]; then
             python -m src.discovery_smoke --output outputs --china-only
+          elif [[ "$GARP_CYCLE_INITIALIZE" == true ]]; then
+            python -m src.discovery_smoke --output outputs --per-region "$GARP_CYCLE_DISCOVERY_SUPPLEMENT"
           else
             python -m src.discovery_smoke --output outputs
           fi
       - name: Require quality audit & zero autonomous trading
-        if: ${{ !inputs.discovery_only }}
+        if: ${{ !inputs.discovery_only && inputs.cycle_mode == 'off' }}
         run: |
           python - <<'PY'
           import json
@@ -323,6 +364,22 @@ jobs:
             mkdir -p outputs
             cp -- "$summary" outputs/53_china_import_validation.json
           fi
+      - name: Freeze immutable financial schedule
+        if: ${{ inputs.cycle_mode == 'initialize' }}
+        env:
+          GARP_SHARD_SIZE: ${{ vars.GARP_CYCLE_SHARD_SIZE || '100' }}
+        run: |
+          python -m src.research_cycle freeze --input outputs --plan cycle-plan \
+            --cycle-id "$GITHUB_RUN_ID" --shard-size "$GARP_SHARD_SIZE"
+      - name: Publish cycle plan
+        if: ${{ inputs.cycle_mode == 'initialize' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ github.run_id }}-plan
+          path: cycle-plan/
+          overwrite: false
+          retention-days: 90
+          if-no-files-found: error
       - name: Upload research artifacts (including troubleshooting artifacts)
         if: always()
         uses: actions/upload-artifact@v4
@@ -331,3 +388,168 @@ jobs:
           path: outputs/
           retention-days: 30
           if-no-files-found: warn
+
+  cycle_prepare:
+    if: ${{ inputs.cycle_mode == 'batch' || inputs.cycle_mode == 'aggregate' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      jobs: ${{ steps.prepare.outputs.jobs }}
+      reserved: ${{ steps.prepare.outputs.reserved }}
+      quota_date: ${{ steps.prepare.outputs.quota_date }}
+      provider_version: ${{ steps.prepare.outputs.provider_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Restore durable shard checkpoints and reserve provider quota
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GARP_CYCLE: ${{ inputs.cycle_state }}
+          GARP_CYCLE_MODE: ${{ inputs.cycle_mode }}
+          GARP_CYCLE_MARKET: ${{ inputs.cycle_market }}
+          GARP_CYCLE_EXPLICIT: ${{ inputs.full_universe }}
+          GARP_CYCLE_ARTIFACTS: ${{ vars.GARP_ALLOW_FINANCIAL_CHECKPOINT_ARTIFACTS }}
+          GARP_CYCLE_JOB_BUDGET: ${{ inputs.financial_budget }}
+          GARP_CYCLE_DAILY_BUDGET: ${{ vars.GARP_CYCLE_DAILY_BUDGET }}
+          GARP_CYCLE_MAX_SHARDS: ${{ vars.GARP_CYCLE_MAX_SHARDS || '4' }}
+        run: bash .github/scripts/restore-research-cycle.sh
+      - name: Publish quota reservation before workers start
+        if: ${{ steps.prepare.outputs.jobs != '0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-quota-${{ steps.prepare.outputs.quota_date }}-${{ steps.prepare.outputs.reserved }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cycle-quota.json
+          retention-days: 2
+          if-no-files-found: error
+      - name: Publish restored working set
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-working-${{ github.run_attempt }}
+          path: cycle-working/
+          retention-days: 2
+          if-no-files-found: error
+
+  cycle_worker:
+    if: ${{ needs.cycle_prepare.outputs.jobs != '0' && inputs.cycle_mode == 'batch' }}
+    needs: cycle_prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 105
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(vars.GARP_CYCLE_PARALLELISM || '2') }}
+      matrix: ${{ fromJSON(needs.cycle_prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install provider version pinned to the snapshot
+        env:
+          GARP_PROVIDER_VERSION: ${{ needs.cycle_prepare.outputs.provider_version }}
+        run: |
+          [[ "$GARP_PROVIDER_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]
+          python -m pip install -r requirements.txt "yfinance==$GARP_PROVIDER_VERSION"
+      - uses: actions/download-artifact@v4
+        with:
+          name: garp-cycle-working-${{ github.run_attempt }}
+          path: cycle-working
+      - name: Run reserved shard
+        env:
+          GARP_SHARD: ${{ matrix.shard }}
+          GARP_BUDGET: ${{ matrix.budget }}
+          GARP_QUOTA_DATE: ${{ needs.cycle_prepare.outputs.quota_date }}
+          GARP_DELAY: ${{ vars.GARP_CYCLE_REQUEST_DELAY || '2' }}
+        run: |
+          python -m src.research_cycle work --plan cycle-working/plan --state cycle-working/state \
+            --shard "$GARP_SHARD" --budget "$GARP_BUDGET" --quota-date "$GARP_QUOTA_DATE" --delay "$GARP_DELAY"
+      - name: Publish independently recoverable shard checkpoint
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: cycle-working/state/${{ matrix.shard }}.sqlite
+          retention-days: 90
+
+  cycle_report:
+    if: ${{ always() && !cancelled() && needs.cycle_prepare.result == 'success' }}
+    needs: [cycle_prepare, cycle_worker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-gemini.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: garp-cycle-working-${{ github.run_attempt }}
+          path: cycle-working
+      - name: Restore current workers
+        if: ${{ needs.cycle_prepare.outputs.jobs != '0' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: garp-cycle-${{ inputs.cycle_state }}-shard-*-${{ github.run_attempt }}
+          path: fresh-shards
+      - name: Build deterministic cycle report
+        env:
+          GARP_CLASSIFICATION: ${{ vars.GARP_CLASSIFICATION_REGISTRY }}
+          GARP_FILING_REQUESTS: ${{ inputs.cycle_mode == 'aggregate' && inputs.official_filing_requests || '' }}
+          GARP_VENDOR_EXPORT: ${{ inputs.cycle_mode == 'aggregate' && vars.GARP_FILING_VENDOR_EXPORT || '' }}
+          GARP_DART_REQUESTS: ${{ inputs.cycle_mode == 'aggregate' && vars.GARP_OPENDART_REQUESTS || '' }}
+          GARP_APPROVALS: ${{ inputs.cycle_mode == 'aggregate' && inputs.gemini_approved_sources || '' }}
+          GARP_ENABLE_MODEL: ${{ inputs.cycle_mode == 'aggregate' && inputs.enable_gemini }}
+          GARP_APPROVED_ONLY: ${{ inputs.gemini_approved_only }}
+          GARP_MAX_DOCS: ${{ inputs.gemini_max_documents }}
+          GARP_MAX_CALLS: ${{ inputs.gemini_max_requests }}
+          GARP_FILING_BUDGET: ${{ inputs.filing_budget }}
+          GARP_GEMINI_MODEL: ${{ vars.GARP_GEMINI_MODEL }}
+          DART_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && secrets.DART_API_KEY || '' }}
+          EDINET_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && inputs.official_filing_requests != '' && secrets.EDINET_API_KEY || '' }}
+          GEMINI_API_KEY: ${{ inputs.cycle_mode == 'aggregate' && inputs.enable_gemini && secrets.GEMINI_API_KEY || '' }}
+        run: |
+          mkdir -p fresh-shards
+          python -m src.research_cycle restore --plan cycle-working/plan --state cycle-working/state --input fresh-shards
+          extra=()
+          for setting in GARP_CLASSIFICATION GARP_FILING_REQUESTS GARP_VENDOR_EXPORT GARP_DART_REQUESTS GARP_APPROVALS; do
+            [[ -n "${!setting}" ]] || continue
+            path="$(realpath -e -- "${!setting}")"
+            [[ "$path" == "$GITHUB_WORKSPACE/"*.csv && -f "$path" ]]
+            case "$setting" in
+              GARP_CLASSIFICATION) extra+=(--classification "$path");;
+              GARP_FILING_REQUESTS) extra+=(--official-filing-requests "$path");;
+              GARP_VENDOR_EXPORT) extra+=(--vendor-export "$path");;
+              GARP_DART_REQUESTS) extra+=(--opendart-requests "$path");;
+              GARP_APPROVALS) extra+=(--approved-sources "$path");;
+            esac
+          done
+          extra+=(--source-dir "$RUNNER_TEMP/garp-cycle-originals" --filing-budget "$GARP_FILING_BUDGET")
+          if [[ "$GARP_ENABLE_MODEL" == true ]]; then
+            extra+=(--enable-gemini --max-documents "$GARP_MAX_DOCS" --max-requests "$GARP_MAX_CALLS"
+              --gemini-cache "$RUNNER_TEMP/garp-cycle-gemini.sqlite")
+            if [[ "$GARP_APPROVED_ONLY" == true ]]; then extra+=(--gemini-approved-only); fi
+          fi
+          python -m src.research_cycle aggregate --plan cycle-working/plan --state cycle-working/state \
+            --output cycle-report "${extra[@]}"
+      - name: Publish rolled-up durable checkpoint
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-state-${{ github.run_attempt }}
+          path: cycle-working/state/
+          retention-days: 90
+      - name: Publish cycle coverage and research artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: garp-cycle-${{ inputs.cycle_state }}-report-${{ github.run_attempt }}
+          path: cycle-report/
+          retention-days: 30
