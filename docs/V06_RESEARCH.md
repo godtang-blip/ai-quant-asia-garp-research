@@ -22,12 +22,12 @@ python -m src.v06 --discover-mode all5_official --max-symbols 25 \
 | 시장 | 등록 공시 출처 | 입력 경로 |
 |---|---|---|
 | 한국 | OpenDART 및 DART | OpenDART 연간 연결재무제표 API 또는 권한 있는 정규화 export |
-| 일본 | EDINET | EDINET API v2 키로 취득한 공시 또는 공식 XBRL의 권한 있는 정규화 export |
-| 중국 | SSE Main/STAR, SZSE Main/ChiNext, BSE | 거래소 공시의 권한 있는 정규화 export |
-| 홍콩 | HKEXnews | 승인된 공시 HTML/PDF의 권한 있는 정규화 export |
-| 대만 | MOPS, TWSE/TPEx 발행사 | 공식 재무표의 권한 있는 정규화 export |
+| 일본 | EDINET | 등록 키를 사용하는 EDINET API v2 조회·원문 XBRL 추출 또는 승인 export |
+| 중국 | SSE Main/STAR, SZSE Main/ChiNext, BSE | 승인된 공식 문서의 자동 다운로드·파싱 또는 승인 export |
+| 홍콩 | HKEXnews | 승인된 공식 HTML/PDF의 자동 다운로드·파싱 또는 승인 export |
+| 대만 | MOPS, TWSE/TPEx 발행사 | 승인된 공식 HTML/PDF의 자동 다운로드·파싱 또는 승인 export |
 
-한국 API 경로는 `DART_API_KEY`와 `--opendart-requests REQUESTS.csv --filing-budget 1 --source-dir PRIVATE_DIR`로 설정합니다. 요청 파일 열은 `ticker,issuer_id,issuer_name,receipt_number,period_start,period_end,publication_date`입니다. OpenDART의 [단일회사 전체 재무제표](https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019020)에서 연간 연결 수치와 접수번호를 대조합니다. API에서 제공하는 최신 응답이 승인된 접수번호와 다르면 보류합니다. 한국 이외의 신규 공식 원본 파서는 제공하지 않습니다.
+한국 API 경로는 `DART_API_KEY`와 `--opendart-requests REQUESTS.csv --filing-budget 1 --source-dir PRIVATE_DIR`로 설정합니다. 요청 파일 열은 `ticker,issuer_id,issuer_name,receipt_number,period_start,period_end,publication_date`입니다. OpenDART의 [단일회사 전체 재무제표](https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019020)에서 연간 연결 수치와 접수번호를 대조합니다. API에서 제공하는 최신 응답이 승인된 접수번호와 다르면 보류합니다. 시장별 원문 취득, 회계 컨텍스트, Actions 입력 및 성공률은 [공식 공시 검증 가이드](V06_OFFICIAL_VALIDATION.md)를 참조하세요.
 
 출처 페이지는 [OpenDART](https://opendart.fss.or.kr/guide/main.do), [EDINET](https://disclosure2.edinet-fsa.go.jp/), [SSE](https://www.sse.com.cn/), [SZSE](https://www.szse.cn/), [BSE](https://www.bse.cn/), [HKEXnews](https://www.hkexnews.hk/), [MOPS](https://mops.twse.com.tw/)에서 확인합니다.
 

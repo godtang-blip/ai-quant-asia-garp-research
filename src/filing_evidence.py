@@ -16,12 +16,12 @@ SOURCES = {
     'JPX': ('Japan', 'EDINET', ('disclosure2dl.edinet-fsa.go.jp', 'disclosure2.edinet-fsa.go.jp', 'api.edinet-fsa.go.jp')),
     'SSE_MAIN': ('China', 'SSE', ('sse.com.cn',)),
     'SSE_STAR': ('China', 'SSE', ('sse.com.cn',)),
-    'SZSE_MAIN': ('China', 'SZSE', ('szse.cn',)),
-    'SZSE_CHINEXT': ('China', 'SZSE', ('szse.cn',)),
+    'SZSE_MAIN': ('China', 'SZSE', ('szse.cn', 'static.cninfo.com.cn')),
+    'SZSE_CHINEXT': ('China', 'SZSE', ('szse.cn', 'static.cninfo.com.cn')),
     'BSE': ('China', 'BSE', ('bse.cn',)),
     'HKEX': ('Hong Kong', 'HKEXnews', ('hkexnews.hk',)),
-    'TWSE': ('Taiwan', 'MOPS', ('mops.twse.com.tw',)),
-    'TPEX': ('Taiwan', 'MOPS', ('mops.twse.com.tw',)),
+    'TWSE': ('Taiwan', 'MOPS', ('mops.twse.com.tw', 'doc.twse.com.tw')),
+    'TPEX': ('Taiwan', 'MOPS', ('mops.twse.com.tw', 'doc.twse.com.tw')),
 }
 METRICS = {
     'revenue', 'operating_income', 'attributable_net_income', 'operating_cash_flow',

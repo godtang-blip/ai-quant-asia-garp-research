@@ -105,16 +105,21 @@ def is_public_https(url: str) -> bool:
         return False
 
 
-def plan(candidates: Path, evidence: Path, approvals: Path, limit: int,
+def plan(candidates: Path | None, evidence: Path | None, approvals: Path, limit: int,
          requested: list[str]) -> tuple[list[str], dict[str, Filing]]:
-    ranked = read_csv(candidates, {'ticker', 'v031_research_eligible'})
-    eligible = list(dict.fromkeys(row['ticker'] for row in ranked if row['ticker'] and
-                                  (row['v031_research_eligible'] or '').lower() in {'true', '1', 'yes'}))
+    approval_rows = read_csv(approvals, {'ticker', 'source_url'})
+    if candidates is None:
+        eligible = list(dict.fromkeys(row['ticker'] for row in approval_rows
+                                      if row['ticker'] and row.get('document_date')))
+    else:
+        ranked = read_csv(candidates, {'ticker', 'v031_research_eligible'})
+        eligible = list(dict.fromkeys(row['ticker'] for row in ranked if row['ticker'] and
+                                      (row['v031_research_eligible'] or '').lower() in {'true', '1', 'yes'}))
     selected = list(dict.fromkeys(requested)) if requested else eligible[:limit]
     if len(selected) > limit or set(selected).difference(eligible):
         raise ValueError('Requested tickers must be screening-eligible and within --max-companies')
     approved = {}
-    for row in read_csv(approvals, {'ticker', 'source_url'}):
+    for row in approval_rows:
         key = row['ticker'], row['source_url']
         if key[0] not in selected:
             continue
@@ -140,7 +145,9 @@ def plan(candidates: Path, evidence: Path, approvals: Path, limit: int,
             options.setdefault(ticker, []).append(Filing(
                 ticker, url, published, row['issuer_name'].strip(), row['date_source_url'],
                 row.get('expected_sha256') or '', 'OPERATOR_APPROVAL_MANIFEST', row['document_title'].strip(), (row.get('issuer_identifier') or '').strip()))
-    for row in read_csv(evidence, {'ticker', 'source_url', 'published_date', 'evidence_type', 'identifier'}):
+    evidence_rows = read_csv(evidence, {'ticker', 'source_url', 'published_date', 'evidence_type',
+                                       'identifier'}) if evidence is not None else []
+    for row in evidence_rows:
         ticker, url = row['ticker'], row['source_url']
         is_filing = row['evidence_type'] == 'REGULATOR_FILING' or (
             row['evidence_type'] == 'ISSUER_LINK_REGISTERED' and row['identifier'] == ticker + '|filing_url')
@@ -363,6 +370,7 @@ class Gemini:
         self.not_before = 0.0
         self.input_tokens = 0
         self.output_tokens = 0
+        self.responses_received = 0
 
     def generate(self, contents: str, **config):
         from google.genai.errors import APIError
@@ -384,6 +392,7 @@ class Gemini:
                         thinking_config=self.types.ThinkingConfig(thinking_budget=0),
                         automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
                         **config))
+                self.responses_received += 1
                 usage = getattr(response, 'usage_metadata', None)
                 self.input_tokens += getattr(usage, 'prompt_token_count', None) or 0
                 self.output_tokens += getattr(usage, 'candidates_token_count', None) or 0

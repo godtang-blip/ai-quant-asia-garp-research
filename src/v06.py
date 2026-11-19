@@ -12,12 +12,11 @@ import subprocess
 import time
 
 import pandas as pd
-import requests
 
 from .discovery_review import candidate_review
 from .filing_evidence import SOURCES, read_export, reconcile
 from .gemini_filing import Gemini, plan, research
-from .opendart_statements import fetch_statement
+from .official_filings import acquire_sources, ATTACHMENT_HOSTS
 from .v031 import FundamentalsUnavailable, _fetch_vendor
 from .v051 import run as run_legacy
 
@@ -37,6 +36,8 @@ class FinancialBudget:
         self.fetch = fetch
         self.requests = 0
         self.hits = 0
+        self.live_tickers = set()
+        self.live_successes = set()
         self.not_before = 0.0
 
     def __call__(self, ticker):
@@ -50,6 +51,7 @@ class FinancialBudget:
                 raise RuntimeError('FINANCIAL_FETCH_BUDGET_EXHAUSTED')
             time.sleep(max(0, self.not_before - time.monotonic()))
             self.requests += 1
+            self.live_tickers.add(ticker)
             self.not_before = time.monotonic() + self.delay
             try:
                 payload = self.fetch(ticker)
@@ -61,6 +63,7 @@ class FinancialBudget:
             with self.connection:
                 self.connection.execute('INSERT OR REPLACE INTO fundamentals VALUES (?, ?, ?)',
                                         (self.scope, ticker, json.dumps(payload)))
+            self.live_successes.add(ticker)
             return payload
         raise AssertionError('Unreachable')
 
@@ -78,54 +81,48 @@ def write_json(output, name, payload):
 
 def gemini_report(args):
     model = args.model
-    report = {'model': model, 'status': 'NOT_REQUESTED', 'gemini_requests': 0}
-    if not args.approved_sources:
+    report = {'model': model, 'status': 'NOT_REQUESTED', 'gemini_requests': 0,
+              'api_responses_received': 0}
+    if not args.enable_gemini and not args.gemini_preflight:
         return report
-    if not (args.output / '18_evidence_ledger.csv').is_file():
-        return {**report, 'status': 'NO_EVIDENCE_LEDGER'}
-    selected, filings = plan(args.output / '01_all_research_candidates.csv',
-                             args.output / '18_evidence_ledger.csv', args.approved_sources,
+    key = os.environ.get('GEMINI_API_KEY', '').strip()
+    if not args.approved_sources:
+        blockers = ['APPROVED_SOURCES_MISSING']
+        if args.enable_gemini and not key:
+            blockers.append('GEMINI_API_KEY_MISSING')
+        return {**report, 'status': 'NOT_TESTED', 'reason': blockers[0], 'blockers': blockers}
+    candidates = args.output / '01_all_research_candidates.csv'
+    ledger = args.output / '18_evidence_ledger.csv'
+    if not args.gemini_approved_only and (not candidates.is_file() or not ledger.is_file()):
+        return {**report, 'status': 'NOT_TESTED', 'reason': 'RESEARCH_CANDIDATES_OR_LEDGER_MISSING'}
+    selected, filings = plan(None if args.gemini_approved_only else candidates,
+                             None if args.gemini_approved_only else ledger, args.approved_sources,
                              args.max_documents, [])
     filings = {ticker: filing for ticker, filing in filings.items()
                if date.fromisoformat(filing.document_date) <= args.asof_date}
-    key = os.environ.get('GEMINI_API_KEY', '').strip()
+    if not filings:
+        return {**report, 'status': 'NOT_TESTED', 'reason': 'NO_APPROVED_DATED_FILING'}
     agent = Gemini(key, model, args.max_requests, 1, max_input_bytes=args.gemini_input_bytes,
-                   max_output_tokens=args.gemini_output_tokens, delay=1) if args.enable_gemini and key and filings else None
-    status = 'REQUESTED' if agent else ('NO_APPROVED_DATED_FILING' if not filings else
-                                       'API_KEY_MISSING' if args.enable_gemini else 'API_DISABLED')
-    report = research(selected, filings, agent, replay_dir=args.source_dir)
-    return {**report, 'model': model, 'status': status,
+                   max_output_tokens=args.gemini_output_tokens, delay=1) if args.enable_gemini and key else None
+    mode = 'live' if agent else 'preflight' if args.gemini_preflight else 'dry-run'
+    result = research(selected, filings, agent, mode=mode, replay_dir=args.gemini_replay_dir)
+    responses = agent.responses_received if agent else 0
+    status = ('LIVE_RESPONSE_RECEIVED' if responses else 'FAILED' if result['gemini_requests']
+              else 'NOT_TESTED')
+    reason = ('' if responses else 'NO_SUCCESSFUL_API_RESPONSE' if status == 'FAILED' else
+              'DOCUMENT_PREFLIGHT_DID_NOT_REACH_MODEL' if agent else 'PREFLIGHT_ONLY' if args.gemini_preflight
+              else 'GEMINI_API_KEY_MISSING')
+    return {**result, 'model': model, 'status': status, 'reason': reason,
+            'api_responses_received': responses,
             'sdk_version': version('google-genai') if agent else None,
             'reported_input_tokens': agent.input_tokens if agent else 0,
             'reported_output_tokens': agent.output_tokens if agent else 0,
             'estimated_cost_usd': None}
 
 
-def acquisition(args):
-    documents = read_export(args.opendart_requests)
-    key = os.environ.get('DART_API_KEY', '').strip()
-    rows, attempts = [], []
-    with requests.Session() as session:
-        for index, document in enumerate(documents):
-            attempt = {'ticker': document.get('ticker', ''), 'status': 'NOT_TESTED'}
-            attempts.append(attempt)
-            if not key:
-                attempt['reason'] = 'DART_API_KEY_MISSING'
-                continue
-            if index >= args.filing_budget:
-                attempt['reason'] = 'FILING_BUDGET_EXHAUSTED'
-                continue
-            if index:
-                time.sleep(args.delay_seconds)
-            try:
-                extracted = fetch_statement(session, document, key, args.asof_date, args.source_dir)
-            except (ValueError, KeyError, OSError, requests.RequestException) as exc:
-                attempt.update(status='FAILED', reason=type(exc).__name__)
-                continue
-            rows.extend(extracted)
-            attempt.update(status='RETRIEVED' if extracted else 'NO_MAPPED_STATEMENT_ROWS',
-                           observations=len(extracted))
-    return rows, attempts
+def rate(numerator, denominator):
+    return {'succeeded': numerator, 'denominator': denominator,
+            'rate': numerator / denominator if denominator else None}
 
 
 def produce_reports(output, ranked, stages, findings, limit):
@@ -204,18 +201,23 @@ def run(args):
     universe = read_table(output, '11_discovery_universe.csv')
     logs = read_table(output, '12_discovery_sources_log.csv')
     print('Primary filing import and deterministic reconciliation', flush=True)
-    live_primary, filing_attempts = acquisition(args)
-    primary = read_export(args.primary_export) + live_primary
+    live_primary, filing_attempts = acquire_sources(
+        args.official_filing_requests, args.opendart_requests, args.source_dir, args.asof_date,
+        args.filing_budget, args.delay_seconds,
+        {name: os.environ.get(name, '').strip() for name in ('DART_API_KEY', 'EDINET_API_KEY')})
+    primary = [dict(row, acquisition='OPERATOR_EXPORT') for row in read_export(args.primary_export)]
+    primary += [dict(row, acquisition='OFFICIAL_LIVE') for row in live_primary]
     vendor = read_export(args.vendor_export)
     audit = reconcile(primary, vendor, args.source_dir or output, args.asof_date, args.tolerance)
     pd.DataFrame(audit, columns=list(dict.fromkeys(
         ['ticker', 'venue', 'metric', 'status', 'reason'] + [key for row in audit for key in row]
     ))).to_csv(output / '62_numerical_reconciliation.csv', index=False)
     registry = [{'venue': venue, 'market': market, 'publisher': publisher,
-                 'access': 'AUTHORIZED_NORMALIZED_EXPORT',
-                 'status': 'LIVE_OBSERVATIONS' if venue == 'KRX' and live_primary else
+                 'access': ('REGISTERED_API' if venue in {'KRX', 'JPX'} else
+                            'APPROVED_OFFICIAL_ATTACHMENT' if venue in ATTACHMENT_HOSTS else 'AUTHORIZED_NORMALIZED_EXPORT'),
+                 'status': 'LIVE_OBSERVATIONS' if any(row['venue'] == venue for row in live_primary) else
                  'EXPORT_SUPPLIED' if any(row.get('venue') == venue for row in primary) else
-                 'LIVE_ATTEMPTED_SEE_MANIFEST' if venue == 'KRX' and filing_attempts else 'NOT_CONFIGURED'}
+                 'SEE_FILING_ATTEMPTS' if any(row['venue'] == venue for row in filing_attempts) else 'NOT_CONFIGURED'}
                 for venue, (market, publisher, _) in SOURCES.items()]
     pd.DataFrame(registry).to_csv(output / '61_primary_source_registry.csv', index=False)
     coverage = []
@@ -229,7 +231,10 @@ def run(args):
                          'mapped_issuer_ids_in_filing_exports': len({row['issuer_id'] for row in filings}),
                          'requiring_evidence_review': int(evaluated.get('v031_research_eligible', pd.Series(dtype=bool)).eq(True).sum()) -
                              int(stages.loc[stages.market.eq(market), 'research_stage'].eq('MEMO_READY').sum() if not stages.empty else 0),
-                         'financial_rows': len(attempts), 'financial_fetch_succeeded': int(attempts.get('fetch_error', pd.Series(dtype=str)).eq('').sum()),
+                         'financial_rows': len(attempts),
+                         'live_financial_attempted': int(attempts.ticker.isin(budget.live_tickers).sum()) if not attempts.empty else 0,
+                         'live_financial_returned': int(attempts.ticker.isin(budget.live_successes).sum()) if not attempts.empty else 0,
+                         'financial_fetch_succeeded': int(attempts.get('fetch_error', pd.Series(dtype=str)).eq('').sum()),
                          'securities_scored': int(pd.to_numeric(evaluated.get('cross_industry_score_100', pd.Series(dtype=float)), errors='coerce').notna().sum()),
                          'screen_passed': int(evaluated.get('v031_research_eligible', pd.Series(dtype=bool)).eq(True).sum()),
                          'securities_with_primary_observations': len({row['ticker'] for row in filings})})
@@ -258,7 +263,15 @@ def run(args):
             & exclusions.v031_research_eligible.eq(True)
             & exclusions.ticker.isin(source_backed - blocked))
     exclusions.to_csv(output / '64_exclusion_audit.csv', index=False)
-    shortlisted = produce_reports(output, ranked, stages, audit, args.report_limit)
+    report_files = ('65_five_market_shortlist.csv', '66_candidate_briefs.md')
+    report_error = None
+    try:
+        shortlisted = produce_reports(output, ranked, stages, audit, args.report_limit)
+    except OSError as exc:
+        shortlisted, report_error = 0, type(exc).__name__
+    report_count = sum((output / item).is_file() and (output / item).stat().st_size > 0 for item in report_files)
+    verified_live = {(row['venue'], row['ticker'], row['source_sha256']) for row in audit
+                     if row['acquisition'] == 'OFFICIAL_LIVE' and row['status'] == 'MACHINE_RECONCILED'}
     run_manifest = {
         'revision': '0.6', 'asof_date': str(args.asof_date),
         'generated_utc': datetime.now(timezone.utc).isoformat(),
@@ -270,6 +283,24 @@ def run(args):
         'failed_fetch_reasons': dict(Counter(value for value in (failed if ranked.empty else ranked)
                                              .get('fetch_error', []) if value)), 'discovery_sources': logs.to_dict('records'),
         'filing_attempts': filing_attempts,
+        'outcomes': {
+            'financial_data_mode': 'SNAPSHOT_REPLAY' if args.snapshot_csv else 'LIVE_WITH_OPTIONAL_CHECKPOINT',
+            'discovered_unique_tickers': int(universe.ticker.nunique()),
+            'live_financial_responses': rate(len(budget.live_successes), len(budget.live_tickers)),
+            'live_financial_scored': rate(sum(row['ticker'] in budget.live_successes and
+                                              pd.notna(pd.to_numeric(row['cross_industry_score_100'], errors='coerce'))
+                                              for row in ranked.to_dict('records')), len(budget.live_tickers)),
+            'official_source_responses': rate(sum(row['source_response_received'] for row in filing_attempts),
+                                             sum(row['attempted'] for row in filing_attempts)),
+            'official_document_retrieval': rate(sum(row['document_retrieved'] for row in filing_attempts),
+                                               sum(row['attempted'] for row in filing_attempts)),
+            'official_statement_parsing': rate(sum(row['observations'] > 0 for row in filing_attempts),
+                                               sum(row['document_retrieved'] for row in filing_attempts)),
+            'official_documents_with_numeric_reconciliation': rate(len(verified_live),
+                                                                   sum(row['observations'] > 0 for row in filing_attempts)),
+            'research_report_files': rate(report_count, len(report_files)),
+            'research_report_error': report_error,
+        },
         'verification_states': dict(Counter(row['status'] for row in audit)),
         'vendor_requests': budget.requests, 'checkpoint_hits': budget.hits,
         'provider_versions': {'yfinance': version('yfinance')},
@@ -299,14 +330,20 @@ def main():
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--asof-date', type=date.fromisoformat, default=datetime.now(timezone.utc).date())
     parser.add_argument('--opendart-requests', type=Path)
+    parser.add_argument('--official-filing-requests', type=Path)
     parser.add_argument('--filing-budget', type=int, choices=range(11), default=0)
     parser.add_argument('--primary-export', type=Path)
     parser.add_argument('--vendor-export', type=Path)
     parser.add_argument('--source-dir', type=Path)
     parser.add_argument('--tolerance', type=Decimal, default=Decimal('0.02'))
     parser.add_argument('--approved-sources', type=Path)
-    parser.add_argument('--enable-gemini', action='store_true')
-    parser.add_argument('--model', default=os.environ.get('GARP_GEMINI_MODEL', DEFAULT_MODEL))
+    gemini_mode = parser.add_mutually_exclusive_group()
+    gemini_mode.add_argument('--enable-gemini', action='store_true')
+    gemini_mode.add_argument('--gemini-preflight', action='store_true')
+    parser.add_argument('--gemini-approved-only', action='store_true',
+                        help='Use explicitly dated approvals independently of screening for a source canary')
+    parser.add_argument('--gemini-replay-dir', type=Path)
+    parser.add_argument('--model', default=os.environ.get('GARP_GEMINI_MODEL') or DEFAULT_MODEL)
     parser.add_argument('--gemini-input-bytes', type=int, default=24000)
     parser.add_argument('--gemini-output-tokens', type=int, default=1024)
     parser.add_argument('--previous-artifacts', type=Path)
@@ -321,7 +358,7 @@ def main():
         parser.error('Historical dates require a dated vendor snapshot. Future dates are invalid.')
     if not 1 <= args.gemini_input_bytes <= 24000 or not 1 <= args.gemini_output_tokens <= 1024:
         parser.error("Gemini caps are 24000 input bytes and 1024 output tokens per request")
-    if args.opendart_requests and (not args.source_dir or args.source_dir.resolve().is_relative_to(args.output.resolve())):
+    if (args.opendart_requests or args.official_filing_requests) and (not args.source_dir or args.source_dir.resolve().is_relative_to(args.output.resolve())):
         parser.error('Live filing acquisition requires a private --source-dir outside --output')
     run(args)
 
