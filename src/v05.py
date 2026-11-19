@@ -21,11 +21,23 @@ from .research_quality import enhance
 def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_official',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None,
         per_region:int=90,evidence_mode:str='full',evidence_limit:int=8,
-        asof_date:dt.date|None=None)->dict:
+        asof_date:dt.date|None=None, *, markets=None, fetch_vendor=None, frozen_discovery=None,
+        classification=None, campaign=False, metric_evidence_dir=None)->dict:
     if snapshot_csv is not None and discover_mode!='off':
         raise ValueError('Snapshot replay must use --discover-mode off (prevents current-universe lookahead)')
+    options = {}
+    if markets is not None:
+        options['markets'] = markets
+    if fetch_vendor is not None:
+        options['fetch_vendor'] = fetch_vendor
+    if frozen_discovery is not None:
+        options['frozen_discovery'] = frozen_discovery
+    if classification is not None:
+        options['classification'] = classification
+    if campaign:
+        options['campaign'] = campaign
     meta=run_v031(universe,output,max_symbols,discover_mode,fx_mode,delay_seconds,
-                   snapshot_csv,per_region,evidence_mode,evidence_limit)
+                   snapshot_csv,per_region,evidence_mode,evidence_limit, **options)
     # Market registry is not a claim of downloaded/universal coverage.
     logs=pd.read_csv(output/'12_discovery_sources_log.csv',keep_default_na=False)
     rows=[]
@@ -42,7 +54,8 @@ def run(universe:Path,output:Path,max_symbols:int=150,discover_mode:str='all5_of
     pd.DataFrame(rows).to_csv(output/'36_official_exchange_source_registry.csv',index=False,encoding='utf-8-sig')
     # Replay must not use primary reviews submitted AFTER the hypothetical snapshot.
     apply_reviews=not snapshot_csv or asof_date is not None
-    quality=enhance(output,universe.parent,asof_date=asof_date,enable_reviews=apply_reviews)
+    quality=enhance(output,universe.parent,asof_date=asof_date,enable_reviews=apply_reviews,
+                    metric_evidence_dir=metric_evidence_dir)
     meta.update(pipeline_revision='0.5',quality_gate=quality,
                 official_source_coverage='LIVE_SUPPLEMENTAL_AND_VALIDATED_EXPORTS_SEE_SOURCE_LOG')
     (output/'37_v05_run_manifest.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding='utf-8')

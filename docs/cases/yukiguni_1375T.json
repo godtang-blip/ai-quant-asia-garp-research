@@ -1,0 +1,45 @@
+{
+  "ticker": "1375.T",
+  "issuer": "Yukiguni Factory",
+  "snapshot_date": "2026-11-19",
+  "source_status": "USER_SUPPLIED_REAL_CASE_VALUES_ORIGINALS_UNAVAILABLE_IN_THIS_AUDIT",
+  "vendor": {
+    "price": "1137",
+    "eps": "158",
+    "per": "7.1962",
+    "quote_currency": "JPY",
+    "stated_eps_currency": "JPY",
+    "observation": {
+      "metric": "eps",
+      "period_kind": "FORWARD",
+      "period_start": "",
+      "period_end": "",
+      "currency": "JPY",
+      "unit": "CURRENCY_PER_SHARE",
+      "source_url": "https://finance.yahoo.com/quote/1375.T/"
+    }
+  },
+  "issuer_forecast": {
+    "value": "63.69",
+    "scale": "1",
+    "metric": "eps",
+    "period_kind": "FORWARD",
+    "fiscal_label": "FY2027",
+    "period_start": "",
+    "period_end": "",
+    "currency": "JPY",
+    "unit": "CURRENCY_PER_SHARE",
+    "verification_status": "USER_REPORTED_ISSUER_GUIDANCE",
+    "source_url": ""
+  },
+  "trailing_eps": {
+    "value": "97.76",
+    "scale": "1",
+    "metric": "eps",
+    "period_kind": "TTM",
+    "currency": "JPY",
+    "unit": "CURRENCY_PER_SHARE",
+    "verification_status": "USER_REPORTED_SEPARATE_TTM_REFERENCE",
+    "source_url": ""
+  }
+}

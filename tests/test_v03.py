@@ -28,6 +28,27 @@ def test_missing_metrics_do_not_win_by_renormalization():
     assert r.loc['FULL','cross_industry_score_100']<=100
 
 
+def test_weighted_coverage_keeps_the_inclusive_65_percent_boundary():
+    boundary = {
+        'ticker': 'BOUNDARY',
+        'peer_group': 'platforms',
+        'revenue_growth': .2,
+        'operating_margin': .2,
+        'roe': .25,
+        'price_to_sales': 3,
+        'debt_to_equity_ratio': .3,
+        'price_change_52w': .2,
+    }
+    below = {**boundary, 'ticker': 'BELOW', 'price_to_sales': None}
+    scored = compute_scores(pd.DataFrame([boundary, below])).set_index('ticker')
+    assert scored.loc['BOUNDARY', 'score_coverage'] == .65
+    assert math.isfinite(scored.loc['BOUNDARY', 'cross_industry_score_100'])
+    assert 'INSUFFICIENT_METRIC_COVERAGE' not in scored.loc['BOUNDARY', 'v03_review_flags']
+    assert scored.loc['BELOW', 'score_coverage'] == .55
+    assert math.isnan(scored.loc['BELOW', 'cross_industry_score_100'])
+    assert 'INSUFFICIENT_METRIC_COVERAGE' in scored.loc['BELOW', 'v03_review_flags']
+
+
 class FixtureFX:
     def to_usd(self,currency):
         rates={'HKD':(0.13,0.129),'CNY':(0.14,0.135),'USD':(1,1)}

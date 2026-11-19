@@ -52,8 +52,8 @@ def test_dispatch_modes_are_literal_strings_forwarded_to_cli():
 def test_listing_only_dispatch_skips_research_and_quality_steps():
     script = (WORKFLOWS / 'run-research-v05.yml').read_text(encoding='utf-8')
     assert 'discovery_only:' in script
-    assert 'if: ${{ inputs.discovery_only }}' in script
-    assert script.count('if: ${{ !inputs.discovery_only }}') == 2
+    assert "if: ${{ inputs.discovery_only || inputs.cycle_mode == 'initialize' }}" in script
+    assert script.count("if: ${{ !inputs.discovery_only && inputs.cycle_mode == 'off' }}") == 2
     assert 'python -m src.discovery_smoke --output outputs' in script
 
 

@@ -56,3 +56,15 @@
 - Started with a small candidate set and growth/value-based screening. Observed semiconductor clustering and suspect Yahoo-derived metrics; these observations motivated peer-group and data-quality checks rather than stronger return claims.
 
 **Comparison caution:** Historical runs use differing vendor snapshots, universes and scoring rules. The versions do not form a controlled study of investment performance.
+
+## v0.6 개발 변경
+
+- 기존 스크린에 5개 시장의 재무 호출 예산과 재실행용 체크포인트를 연결했습니다.
+- 승인된 공시 export의 출처 등록, 원본 해시 검사, 기간·범위·통화를 일치시킨 수치 대조를 추가했습니다.
+- Gemini v0.5.2 추출기를 옮기고, 커버리지·검토 보류·실행 매니페스트를 기존 산출물과 함께 생성합니다.
+
+- EDINET API v2의 공개 XBRL과 SSE·SZSE·BSE·HKEXnews·MOPS의 승인된 공식 원문 취득 경로를 추가했습니다.
+- 기존 Actions에 Gemini 키, 승인 목록, 호출 예산을 연결하고 실행 결과에 공급자 응답·원문 취득·파싱·수치 대조·보고서 생성 결과를 별도로 기록합니다.
+
+- 전체 시장 사이클의 동결 계획, 시장별 샤드, 원자적 종목 예약, Actions 체크포인트 복원과 일일 작업 예산을 연결했습니다.
+- 증거 기반 분류와 금융 지표의 출처를 별도로 보존하고, 같은 입력으로 적격성 변경을 비교합니다.

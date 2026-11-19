@@ -8,9 +8,12 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import re
 from urllib.parse import urlparse
 from pathlib import Path
 import pandas as pd
+
+from .financial_provenance import has_forward_input, reviewed_forward
 
 FIN_FIELDS = ['ticker','metric','primary_value','vendor_value','currency','unit',
  'fiscal_period_start','fiscal_period_end','vendor_period_start','vendor_period_end',
@@ -72,6 +75,11 @@ def reconcile_financials(path:Path, *, cutoff:dt.date|None=None)->tuple[pd.DataF
         if row['review_status']!='CONFIRMED' or not row['reviewer'].strip():flags.append('NOT_ANALYST_CONFIRMED')
         if not _real_url(row['filing_url']) or not row['filing_page'].strip() or not row['statement_label'].strip():
             flags.append('PRIMARY_SOURCE_LOCATOR_INCOMPLETE')
+        label = row['statement_label']
+        if re.search(r'\b(?:core|adjusted|non[- ]ifrs)\b|コア|調整後', label, re.I):
+            flags.append('COMPANY_ADJUSTED_METRIC_OUTSIDE_STATUTORY_GATE')
+        if row['metric'] == 'revenue' and re.search(r'\b(?:product sales|sales of products)\b|製品売上', label, re.I):
+            flags.append('PRODUCT_SALES_DO_NOT_SUBSTITUTE_FOR_TOTAL_REVENUE')
         fdate=_date(row['filing_date'],today)
         p0=_date(row['fiscal_period_start'],today);p1=_date(row['fiscal_period_end'],today)
         v0=_date(row['vendor_period_start'],today);v1=_date(row['vendor_period_end'],today)
@@ -173,6 +181,8 @@ def value_assumptions(path:Path, *, cutoff:dt.date|None=None)->tuple[pd.DataFram
                  valuation_flags='|'.join(issues))
         rows.append(d)
     frame=pd.DataFrame(rows)
+    if frame.empty:
+        frame=pd.DataFrame(columns=DCF_FIELDS+['valuation_status','valuation_flags'])
     return frame, {'valuation_inputs_n':len(source),'valuation_model_valid_n':int(frame.valuation_status.eq('MODELED_MANUAL_INPUT_REVIEWED').sum()) if not frame.empty else 0}
 
 
@@ -180,7 +190,8 @@ def _safe_markdown(s:str)->str:
     return str(s).replace('|','/').replace('\n',' ').replace('\r',' ').strip()
 
 
-def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:bool=True)->dict:
+def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:bool=True,
+            metric_evidence_dir:Path|None=None)->dict:
     """Postprocess v0.31 files; leave original 29 outputs unchanged for audit."""
     cutoff=asof_date or dt.datetime.now(dt.timezone.utc).date()
     ranked=pd.read_csv(outputs/'01_all_research_candidates.csv',dtype={'ticker':str},keep_default_na=False)
@@ -192,6 +203,8 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
     validvaluations={str(r.ticker):r.to_dict() for _,r in assumptions.iterrows()
             if r.valuation_status=='MODELED_MANUAL_INPUT_REVIEWED'} if enable_reviews else {}
     manual={str(r.ticker):r.to_dict() for _,r in decisions.iterrows()}
+    reviewed_ratios, _ = reviewed_forward(ranked, metric_evidence_dir or data / 'financial_evidence', cutoff) \
+        if enable_reviews else ({}, [])
     rows=[]
     for _,r in ranked.iterrows():
         t=str(r.ticker)
@@ -212,7 +225,19 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
              for k in ('decision_date','decision_reason','evidence_urls','analyst_reviewed_by',
                        'key_counterevidence','initial_thesis','revisit_trigger'))
         if not reviewed:reasons.append('HUMAN_ACCEPTANCE_WITH_COUNTEREVIDENCE_NOT_RECORDED')
-        if stage=='VALUATION_REVIEWED' and reviewed:stage='MEMO_READY'
+        industry_reviewed = ('classification_research_tier' not in r or
+                             r.get('industry_confidence') == 'HUMAN_REVIEWED' and
+                             not r.get('classification_conflicts'))
+        if not industry_reviewed:
+            reasons.append('INDEPENDENT_INDUSTRY_REVIEW_REQUIRED')
+        forward_required = has_forward_input(r)
+        forward_review = reviewed_ratios.get(t)
+        forward_status = ('HUMAN_REVIEWED_FORWARD_BASIS' if forward_review else
+                          'HOLD_FORWARD_INPUT_NOT_REVIEWED' if forward_required else 'NO_FORWARD_INPUT_USED')
+        forward_gate = not forward_required or bool(forward_review)
+        if not forward_gate:
+            reasons.append('HOLD_FORWARD_INPUT_NOT_REVIEWED')
+        if stage=='VALUATION_REVIEWED' and reviewed and industry_reviewed and forward_gate:stage='MEMO_READY'
         row={'ticker':t,'company':r.get('company',''),'market':r.get('market',''),
             'priority_score':r.get('cross_industry_score_100',''),
             'research_stage':stage, 'memo_ready':stage=='MEMO_READY',
@@ -221,6 +246,8 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
             'primary_document_verification':'MANUALLY_ATTESTED' if t in primary else 'NONE',
             'valuation_reviewed':t in validvaluations,
             'analyst_decision':decision.get('decision',''),
+            'forward_valuation_gate':forward_status,
+            'reviewed_forward_per':forward_review['issuer_guidance_per'] if forward_review else '',
             'blocking_reasons':'|'.join(dict.fromkeys(reasons))}
         if t in validvaluations:
             for k in ('intrinsic_bear','intrinsic_base','intrinsic_bull','reference_price','upside_base_pct'):
@@ -239,12 +266,13 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
     for _,r in stages.head(30).iterrows():
         t=r.ticker
         memo.extend([f'## {_safe_markdown(r.company)} ({t}) — {r.research_stage}','',
-            f'- Screening priority: {_safe_markdown(r.priority_score)} / 100 (UNVALIDATED for alpha)',
+            f'- Exploratory screening priority: {_safe_markdown(r.priority_score)} / 100 (UNVALIDATED for alpha)',
+            f'- Forward valuation gate: {r.forward_valuation_gate}',
             f'- Primary metric count, same fiscal period: {r.primary_metrics_reconciled}',
             f'- Pending gates: {_safe_markdown(r.blocking_reasons) or "none"}'])
         if t in primary:
             memo.append(f"- Verified period: {primary[t]['period_end']}; currency: {primary[t]['currency']}; checked metrics: {', '.join(primary[t]['metrics'])}")
-        if t in validvaluations:
+        if t in validvaluations and r.forward_valuation_gate != 'HOLD_FORWARD_INPUT_NOT_REVIEWED':
             v=validvaluations[t]
             memo.append('- Illustrative DCF in '+v['currency']+': bear '+f"{v['intrinsic_bear']:.2f} / base {v['intrinsic_base']:.2f} / bull {v['intrinsic_bull']:.2f}"+' per share')
             memo.extend([f"- Investment hypothesis: {_safe_markdown(v['thesis'])}",
@@ -254,7 +282,7 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
                 f"- Thesis falsification: {_safe_markdown(v['falsification_trigger'])}",
                 f"- Analyst source: {_safe_markdown(v['filing_url'])}"])
         else:
-            memo.append('- Valuation: withheld until signed inputs and all counterarguments are supplied')
+            memo.append('- Valuation conclusion withheld pending review of the applicable inputs and counterarguments')
         memo.append('')
     (outputs/'33_analyst_memoranda.md').write_text('\n'.join(memo)+'\n',encoding='utf-8')
     stats={**fstats,**vstats, 'version':'0.5','asof_utc_date':cutoff.isoformat(),
@@ -264,6 +292,7 @@ def enhance(outputs:Path,data:Path,*,asof_date:dt.date|None=None,enable_reviews:
         'evidence_checked_n':int(stages.research_stage.isin(['EVIDENCE_CHECKED','VALUATION_REVIEWED','MEMO_READY']).sum()),
         'valuation_reviewed_n':int(stages.research_stage.isin(['VALUATION_REVIEWED','MEMO_READY']).sum()),
         'memo_ready_n':int(stages.memo_ready.sum()),
+        'unreviewed_forward_input_n':int(stages.forward_valuation_gate.eq('HOLD_FORWARD_INPUT_NOT_REVIEWED').sum()),
         'reconciled_primary_metric_n':int(fstats['reconciled_n']) if enable_reviews else 0,
         'source_evidence_mode':'MANUAL_ONLY_FOR_NUMERIC_FILING_VERIFICATION',
         'future_return_predictive_validation':'NOT_PERFORMED',

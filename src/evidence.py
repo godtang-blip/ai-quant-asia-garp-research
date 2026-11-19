@@ -22,6 +22,12 @@ COLUMNS=['ticker','company','market','evidence_type','published_date','retrieved
          'claim_supported','analyst_note','identifier']
 
 
+EVIDENCE_COLUMNS={'news':['ticker','title','source_url','published_date','source_name','identifier'],
+                  'earnings':['ticker','company','market','quarter_ending','revenue','operating_income','net_income','diluted_eps','currency','data_source','verification_status'],
+                  'filings':['ticker','title','source_url','published_date','source_name','identifier','filing_source','verification_status'],
+                  'ledger':COLUMNS,
+                  'log':['ticker','source','status','detail']}
+
 def _utc():return dt.datetime.now(dt.timezone.utc).isoformat()
 
 def _date_str(s):
@@ -86,15 +92,19 @@ def dart_stock_code_map(key:str, session=None)->dict[str,dict]:
     return out
 
 
-def dart_recent_filings(stock_code:str,corp_map:dict,key:str,session=None,days:int=180,limit:int=7)->list[dict]:
+def dart_recent_filings(stock_code:str,corp_map:dict,key:str,session=None,days:int=180,limit:int=7,
+                        *, annual_only=False, cutoff=None)->list[dict]:
     import requests
     d=corp_map.get(stock_code)
     if not d:return []
     sess=session or requests
-    end=dt.datetime.now(dt.timezone.utc).date();start=end-dt.timedelta(days=days)
-    res=sess.get('https://opendart.fss.or.kr/api/list.json',params={
-        'crtfc_key':key,'corp_code':d['corp_code'],'bgn_de':start.strftime('%Y%m%d'),
-        'end_de':end.strftime('%Y%m%d'),'page_count':min(100,limit)},timeout=18)
+    end=cutoff or dt.datetime.now(dt.timezone.utc).date()
+    start=end-dt.timedelta(days=days)
+    params={'crtfc_key':key,'corp_code':d['corp_code'],'bgn_de':start.strftime('%Y%m%d'),
+            'end_de':end.strftime('%Y%m%d'),'page_count':min(100,limit)}
+    if annual_only:
+        params['pblntf_detail_ty']='A001'
+    res=sess.get('https://opendart.fss.or.kr/api/list.json',params=params,timeout=18)
     res.raise_for_status();payload=res.json()
     if payload.get('status')=='013':return [] # no records
     if payload.get('status')!='000':raise ValueError('DART list API status '+str(payload.get('status')))
@@ -131,11 +141,7 @@ def collect_evidence(candidates:pd.DataFrame,mode:str='full',limit:int=8,
     if mode not in ('off','news','full'):raise ValueError('mode must be off/news/full')
     news=[];earnings=[];filings=[];ledger=[];logs=[]
     if mode=='off' or limit<=0:
-        return {'news':pd.DataFrame(columns=['ticker','title','source_url','published_date','source_name','identifier']),
-                'earnings':pd.DataFrame(columns=['ticker','company','market','quarter_ending','revenue','operating_income','net_income','diluted_eps','currency','data_source','verification_status']),
-                'filings':pd.DataFrame(columns=['ticker','title','source_url','published_date','source_name','identifier','filing_source','verification_status']),
-                'ledger':pd.DataFrame(columns=COLUMNS),
-                'log':pd.DataFrame(columns=['ticker','source','status','detail'])}
+        return {name:pd.DataFrame(columns=columns) for name,columns in EVIDENCE_COLUMNS.items()}
     rows=candidates.head(limit)
     issued={}
     if registry and registry.exists():
@@ -201,9 +207,9 @@ def collect_evidence(candidates:pd.DataFrame,mode:str='full',limit:int=8,
                     {'title':'Analyst registered '+kind, 'source_url':url,
                      'published_date':doc.get('source_date',''),'identifier':t+'|'+kind},
                     'ISSUER_LINK_UNVERIFIED','REGISTERED_NOT_AUTOMATICALLY_VERIFIED')
-    return {'news':pd.DataFrame(news),'earnings':pd.DataFrame(earnings),
-            'filings':pd.DataFrame(filings),'ledger':pd.DataFrame(ledger,columns=COLUMNS),
-            'log':pd.DataFrame(logs,columns=['ticker','source','status','detail'])}
+    observations={'news':news,'earnings':earnings,'filings':filings,'ledger':ledger,'log':logs}
+    return {name:pd.DataFrame(observations[name],columns=columns)
+            for name,columns in EVIDENCE_COLUMNS.items()}
 
 
 def render_evidence_book(candidates:pd.DataFrame, evidence:pd.DataFrame, decisions:pd.DataFrame)->str:

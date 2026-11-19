@@ -3,5 +3,10 @@ __pycache__/
 *.pyc
 outputs/
 .env
+.env.*
 .secrets*
+data/financial_evidence/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .ipynb_checkpoints/

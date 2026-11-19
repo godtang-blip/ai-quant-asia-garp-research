@@ -16,9 +16,10 @@ import numpy as np
 from .discovery_review import review_venues
 from .discovery_v031 import discover_five_markets, select_market_balanced, select_market_coverage_aware
 from .accounting import issuer_evidence, accounting_basis
+from .industry_classification import campaign_classify, classify, issuer_representatives, EXCLUDED
 from .fx import YahooFX, normalized_values
 from .ranking import valid_number
-from .scoring_v03 import compute_scores, SUBMETRICS, CATEGORY_WEIGHTS
+from .scoring_v03 import compute_scores, SUBMETRICS, CATEGORY_WEIGHTS, PE_ANCHORS, PS_ANCHORS
 from .screen import FIELDS, memo_template
 from .evidence import collect_evidence, read_manual_decisions, render_evidence_book
 from .quality_v031 import sensitivity_report, diagnostics, diagnostics_markdown
@@ -45,9 +46,9 @@ def vendor_industry_group(industry: str, sector: str) -> str:
     return 'unclassified'
 
 
-def _fetch_vendor(ticker:str) -> dict:
+def _fetch_vendor(ticker:str, *, session=None) -> dict:
     import yfinance as yf
-    info=yf.Ticker(ticker).get_info() or {}
+    info=(yf.Ticker(ticker, session=session) if session is not None else yf.Ticker(ticker)).get_info() or {}
     if not isinstance(info,dict) or not info:raise ValueError('No fundamentals from vendor')
     out={key:valid_number(info.get(source_key)) for key,source_key in FIELDS.items()}
     # forwardEPS/PE is a vendor field; do not fabricate its reporting currency.
@@ -56,6 +57,7 @@ def _fetch_vendor(ticker:str) -> dict:
         'market_cap':valid_number(info.get('marketCap')),
         'current_price':valid_number(info.get('currentPrice') or info.get('regularMarketPrice')),
         'forward_eps':valid_number(info.get('forwardEps')),
+        'trailing_eps':valid_number(info.get('trailingEps')),
         'currency':str(info.get('currency') or '').upper(),
         'financial_currency':str(info.get('financialCurrency') or '').upper(),
         'debt_to_equity_ratio':valid_number(info.get('debtToEquity')) / 100,
@@ -74,6 +76,9 @@ def _fetch_vendor(ticker:str) -> dict:
         'vendor_price_to_sales_raw':valid_number(info.get('priceToSalesTrailing12Months')),
         'source_url':'https://finance.yahoo.com/quote/'+ticker,
     })
+    quarter = info.get('mostRecentQuarter')
+    if type(quarter) in (int, float) and math.isfinite(quarter) and 0 < quarter < 4_102_444_800:
+        out['provider_financial_period_end'] = dt.datetime.fromtimestamp(quarter, dt.timezone.utc).date().isoformat()
     raw_split=info.get('lastSplitDate')
     if raw_split:
         try: out['last_split_date_utc']=dt.datetime.fromtimestamp(int(raw_split),dt.timezone.utc).date().isoformat()
@@ -192,17 +197,40 @@ class FundamentalsUnavailable(RuntimeError):
         self.attempts = attempts
 
 
+def eligibility(ranked):
+    is_new = ranked.is_new_discovery.map(lambda value: str(value).lower() in ('true', '1'))
+    # Two gates: provisional investigation vs *human-verified* investment memo.
+    # New issuer discovery is NOT an automatic exclusion from research; it is
+    # explicitly marked provisional and cannot be called a validated idea.
+    has_sector=ranked.peer_group.ne('unclassified')
+    profitable=(pd.to_numeric(ranked.operating_margin,errors='coerce')>0) & (pd.to_numeric(ranked.roe,errors='coerce')>0)
+    safe_type=~ranked.security_type_status.fillna('').isin(['NON_EQUITY_VENDOR_EXCLUDED','REJECT_NON_EQUITY'])
+    # Newly discovered symbols need a vendor-confirmed equity type before joining the investigation shortlist.
+    safe_type &= (~is_new | ranked.security_type_status.fillna('').eq('VERIFIED_EQUITY_VENDOR'))
+    clean=ranked.data_quality_flags.fillna('').eq('')
+    viable=(ranked.cross_industry_score_100.notna() & (ranked.score_coverage >= .70)
+           & has_sector & profitable & clean & safe_type & ranked.fetch_error.fillna('').eq(''))
+    return viable, safe_type, is_new
+
+
 def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str='all5',
         fx_mode:str='live',delay_seconds:float=1.0,snapshot_csv:Path|None=None, per_region:int=50,
-        evidence_mode:str='full', evidence_limit:int=8)->dict:
+        evidence_mode:str='full', evidence_limit:int=8, *, markets=None, fetch_vendor=None, frozen_discovery=None,
+        classification=None, campaign=False)->dict:
     if max_symbols<0:raise ValueError('max_symbols must be >= 0')
     if fx_mode not in ('live','off'):raise ValueError('fx_mode live/off')
     if evidence_mode not in ('off','news','full'):raise ValueError('evidence_mode off/news/full')
     if evidence_limit < 0 or evidence_limit > 30:raise ValueError('evidence_limit must be 0..30')
     base=_read_curated(universe_file)
-    combined, discovery_log=discover_five_markets(base,discover_mode,per_region)
+    if frozen_discovery is None:
+        combined, discovery_log=discover_five_markets(base,discover_mode,per_region)
+        eligible = combined
+    else:
+        combined, discovery_log, scheduled = frozen_discovery
+        eligible = combined[combined.ticker.isin(scheduled)]
     selector = select_market_coverage_aware if discover_mode == 'all5_official' else select_market_balanced
-    selected = selector(combined, max_symbols)
+    scope = eligible if markets is None else eligible[eligible.market.isin(markets)]
+    selected = selector(scope, max_symbols)
     outputs.mkdir(parents=True, exist_ok=True)
     for table, name in ((combined, '11_discovery_universe.csv'),
                         (discovery_log, '12_discovery_sources_log.csv'),
@@ -223,7 +251,8 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     rows=[]
     for idx, (_, s) in enumerate(selected.iterrows(),1):
         ticker=str(s.ticker)
-        print(f'[{idx}/{len(selected)}] {ticker} {s.peer_group}',flush=True)
+        if not campaign or snap is None or ticker in snap.index:
+            print(f'[{idx}/{len(selected)}] {ticker} {s.peer_group}',flush=True)
         r=s.to_dict()
         r.update({'retrieved_at_utc':now,'fetch_error':'','reported_accounting_standard':'UNKNOWN_PRIMARY_FILING_REQUIRED',
                   'vendor_quote_type':'', 'revenue_total_raw':math.nan, 'valuation_quote_status':'UNVERIFIED',
@@ -236,7 +265,7 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
                 r['data_source']='HISTORICAL_VENDOR_SNAPSHOT_NO_NEW_FX'
             else:r['fetch_error']='NOT_IN_REPLAY_SNAPSHOT'
         else:
-            try:r.update(_fetch_vendor(ticker))
+            try:r.update((fetch_vendor or _fetch_vendor)(ticker))
             except Exception as exc:r['fetch_error']=type(exc).__name__+': '+str(exc)[:130]
         # Validate security type from issuer-level vendor information when available.
         vendor_type=str(r.get('vendor_quote_type') or '').upper().strip()
@@ -254,6 +283,31 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
             else:
                 r['sector_mapping_status']='UNCLASSIFIED_NEEDS_REVIEW'
         else:r['sector_mapping_status']='CURATED_HUMAN_TAXONOMY_UNVERIFIED'
+        if classification is not None:
+            r['legacy_security_type_status'] = r['security_type_status']
+            evidence = classification.get(ticker)
+            legacy = classify(r, evidence)
+            r.update(legacy)
+            if campaign:
+                classified_before = legacy['operating_peer_group']
+                if legacy['instrument_class'] in EXCLUDED:
+                    r['legacy_security_type_status'] = 'NON_EQUITY_VENDOR_EXCLUDED'
+                elif legacy['instrument_class'] == 'OPERATING_EQUITY':
+                    r['legacy_security_type_status'] = 'VERIFIED_EQUITY_VENDOR'
+                r.update(campaign_classify(r, legacy, evidence, r['retrieved_at_utc']))
+                r['legacy_peer_group'] = classified_before
+            r['peer_group'] = r['operating_peer_group']
+            if r['industry_confidence'] == 'HUMAN_REVIEWED':
+                r['sector_mapping_status'] = 'SOURCE_MAPPING_HUMAN_REVIEWED'
+            elif campaign:
+                r['sector_mapping_status'] = r['industry_confidence']
+                r['classification_research_tier'] = 'EXPLORATORY_WITH_INDUSTRY_REVIEW_REQUIRED'
+            if campaign and r['industry_confidence'] == 'HUMAN_REVIEWED':
+                r['classification_research_tier'] = 'INDUSTRY_REVIEWED_STILL_REQUIRES_RESEARCH_GATES'
+            if r['instrument_class'] in EXCLUDED:
+                r['security_type_status'] = 'NON_EQUITY_VENDOR_EXCLUDED'
+            elif r['instrument_class'] == 'OPERATING_EQUITY':
+                r['security_type_status'] = 'VERIFIED_EQUITY_VENDOR'
         if fx is not None and not r['fetch_error']:
             r.update(normalized_values(r,fx))
         elif snap is not None:
@@ -291,18 +345,7 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     if not d['fetch_error'].fillna('').eq('').any():
         raise FundamentalsUnavailable(d)
     ranked=compute_scores(d)
-    # Two gates: provisional investigation vs *human-verified* investment memo.
-    # New issuer discovery is NOT an automatic exclusion from research; it is
-    # explicitly marked provisional and cannot be called a validated idea.
-    has_sector=ranked.peer_group.ne('unclassified')
-    profitable=(pd.to_numeric(ranked.operating_margin,errors='coerce')>0) & (pd.to_numeric(ranked.roe,errors='coerce')>0)
-    is_new=ranked.is_new_discovery.map(lambda x:str(x).lower() in ('true','1'))
-    safe_type=~ranked.security_type_status.fillna('').isin(['NON_EQUITY_VENDOR_EXCLUDED','REJECT_NON_EQUITY'])
-    # Newly discovered symbols need a vendor-confirmed equity type before joining the investigation shortlist.
-    safe_type &= (~is_new | ranked.security_type_status.fillna('').eq('VERIFIED_EQUITY_VENDOR'))
-    clean=ranked.data_quality_flags.fillna('').eq('')
-    viable=(ranked.cross_industry_score_100.notna() & (ranked.score_coverage >= .70)
-           & has_sector & profitable & clean & safe_type & ranked.fetch_error.fillna('').eq(''))
+    viable, safe_type, is_new = eligibility(ranked)
     ranked['v031_research_eligible']=viable
     ranked['v031_research_status']='REVIEW_REQUIRED'
     ranked.loc[viable & is_new,'v031_research_status']='PROVISIONAL_NEW_DISCOVERY'
@@ -312,7 +355,52 @@ def run(universe_file:Path, outputs:Path, max_symbols:int=150, discover_mode:str
     ranked['v031_memo_ready']=False # requires audited filings & analyst approval, never auto-true
     ranked=ranked.sort_values(['v031_research_eligible','cross_industry_score_100','ticker'],
                               ascending=[False,False,True],na_position='last').reset_index(drop=True)
-    shortlist=ranked[ranked.v031_research_eligible].head(10).copy()
+    shortlist=ranked[ranked.v031_research_eligible]
+    if classification is not None:
+        shortlist=issuer_representatives(shortlist)
+    shortlist=shortlist.head(10).copy()
+    if classification is not None:
+        baseline = compute_scores(d.assign(peer_group=d.legacy_peer_group,
+                                          security_type_status=d.legacy_security_type_status))
+        before, _, _ = eligibility(baseline)
+        baseline['legacy_eligible'] = before
+        if campaign:
+            ordered = baseline.sort_values(['legacy_eligible', 'cross_industry_score_100', 'ticker'],
+                                           ascending=[False, False, True])
+            old_ranks = ordered.loc[ordered.cross_industry_score_100.notna(), 'ticker'].tolist()
+            new_ranks = ranked.loc[ranked.cross_industry_score_100.notna(), 'ticker'].tolist()
+            ranked['valuation_pe_anchors_used'] = ranked.peer_group.map(
+                lambda group: '|'.join(map(str, PE_ANCHORS.get(group, PE_ANCHORS['unclassified']))))
+            ranked['valuation_ps_anchors_used'] = ranked.peer_group.map(
+                lambda group: '|'.join(map(str, PS_ANCHORS.get(group, PS_ANCHORS['unclassified']))))
+            ranked['legacy_rank'] = ranked.ticker.map({ticker: rank for rank, ticker in enumerate(old_ranks, 1)})
+            ranked['campaign_rank'] = ranked.ticker.map({ticker: rank for rank, ticker in enumerate(new_ranks, 1)})
+        audit = ranked[['ticker', 'market', 'classification_version', 'legacy_peer_group',
+                        'legacy_sector_mapping_status', 'legacy_security_type_status',
+                        'operating_peer_group', 'industry_confidence', 'industry_source',
+                        'industry_source_url', 'classification_source_date', 'classification_review_date',
+                        'classification_reviewed_by', 'proposed_peer_group', 'proposed_source_kind',
+                        'proposed_source_url', 'classification_issuer_id', 'classification_share_class',
+                        'listing_counter', 'instrument_class', 'instrument_source',
+                        'v031_research_eligible', 'v031_research_status', 'v03_review_flags',
+                        'data_quality_flags', 'cross_industry_score_100']].merge(
+            baseline[['ticker', 'legacy_eligible', 'cross_industry_score_100']].rename(
+                columns={'cross_industry_score_100': 'legacy_score'}), on='ticker', validate='one_to_one')
+        audit['eligibility_changed'] = audit.legacy_eligible.ne(audit.v031_research_eligible)
+        if campaign:
+            fields = ('original_vendor_industry', 'original_vendor_sector', 'issuer_identity_reported',
+                      'issuer_identity_status', 'vendor_classification_observed_at', 'classification_conflicts',
+                      'classification_review_required', 'company', 'instrument_class', 'instrument_source',
+                      'original_exchange_industry', 'listing_industry_url', 'listing_classification_source',
+                      'vendor_classification_url', 'vendor_security_type_reported', 'official_issuer_source_label',
+                      'sector_weights_used', 'valuation_pe_anchors_used', 'valuation_ps_anchors_used',
+                      'legacy_rank', 'campaign_rank', 'classification_research_tier')
+            indexed = ranked.set_index('ticker')
+            for field in fields:
+                audit[field] = audit.ticker.map(indexed[field])
+        audit['issuer_research_representative'] = audit.ticker.isin(issuer_representatives(
+            ranked[ranked.v031_research_eligible]).ticker)
+        audit.to_csv(outputs / '70_industry_classification_audit_v1.csv', index=False)
     # Order and index must be computed AFTER sorting: pre-sort positional masks mislabel discoveries.
     is_new=ranked.is_new_discovery.map(lambda x:str(x).lower() in ('true','1'))
     decisions=read_manual_decisions(universe_file.parent/'research_decisions.csv')

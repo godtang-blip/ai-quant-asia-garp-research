@@ -5,6 +5,7 @@ Historical v0.5 artifacts are preserved unless explicitly noted below.
 """
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 import re
@@ -13,7 +14,7 @@ import unicodedata
 import pandas as pd
 from .discovery_v031 import REGIONS, minimum_market_fetches
 from .listing_exports import VENUES
-from .evidence import read_manual_decisions, render_evidence_book
+from .evidence import EVIDENCE_COLUMNS, read_manual_decisions, render_evidence_book
 
 SOURCE_KEYS={
     'Korea':'official_krx_listed_issues',
@@ -210,8 +211,29 @@ def produce_research_queues(outputs:Path,per_market:int=5,global_top:int=10)->di
             'cross_market_review_rows_n':len(market_frame)}
 
 
+def _read_news(path:Path)->pd.DataFrame:
+    columns=EVIDENCE_COLUMNS['news']
+    with path.open(encoding='utf-8-sig',newline='') as stream:
+        # Older runs wrote a blank file when the provider returned zero headlines.
+        if not stream.read().strip():
+            return pd.DataFrame(columns=columns)
+        stream.seek(0)
+        reader=csv.reader(stream,strict=True)
+        header=next(row for row in reader if row)
+        if not set(columns).issubset(header) or len(header)!=len(set(header)):
+            raise ValueError(f'{path.name}: invalid news CSV header')
+        rows=[]
+        for row in reader:
+            if not row:
+                continue
+            if len(row)!=len(header):
+                raise ValueError(f'{path.name}: invalid field count at line {reader.line_num}')
+            rows.append(row)
+    return pd.DataFrame(rows,columns=header)
+
+
 def audit_news(outputs:Path, data:Path)->dict:
-    rows=_read(outputs,'19_news_headlines.csv')
+    rows=_read_news(outputs/'19_news_headlines.csv')
     ledger=_read(outputs,'18_evidence_ledger.csv')
     ranked=_read(outputs,'01_all_research_candidates.csv')
     issuer={str(r.ticker):r.to_dict() for _,r in ranked.iterrows()}
