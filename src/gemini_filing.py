@@ -11,6 +11,9 @@ from hashlib import sha256
 from html import escape
 from io import BytesIO
 import json
+import math
+import sqlite3
+from contextlib import closing
 import os
 from pathlib import Path
 import re
@@ -352,7 +355,9 @@ def check_observation(proposal: dict, passage: Passage) -> dict | None:
 
 class Gemini:
     def __init__(self, key: str, model: str, max_requests: int, retries: int, *,
-                 max_input_bytes=MAX_INPUT_BYTES, max_output_tokens=MAX_OUTPUT_TOKENS, delay=0):
+                 max_input_bytes=MAX_INPUT_BYTES, max_output_tokens=MAX_OUTPUT_TOKENS, delay=0,
+                 total_input_budget=250_000, total_output_budget=9_216, cache_path=None,
+                 input_price=None, output_price=None):
         from google import genai
         from google.genai import types
 
@@ -371,34 +376,88 @@ class Gemini:
         self.input_tokens = 0
         self.output_tokens = 0
         self.responses_received = 0
+        self.cache_path = cache_path
+        self.cache_hits = 0
+        self.document_sha256 = ''
+        self.total_input_budget = total_input_budget
+        self.total_output_budget = total_output_budget
+        self.input_reserved = 0
+        self.output_reserved = 0
+        for price in (input_price, output_price):
+            if price is not None and (not math.isfinite(price) or price < 0):
+                raise ValueError('Invalid configured Gemini price')
+        self.input_price = input_price
+        self.output_price = output_price
+
+    @property
+    def estimated_cost(self):
+        if self.input_price is None or self.output_price is None:
+            return None
+        return (self.input_tokens * self.input_price + self.output_tokens * self.output_price) / 1_000_000
+
+    def response_cache(self, key, response=None):
+        if self.cache_path is None or not self.document_sha256:
+            return None
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with closing(sqlite3.connect(self.cache_path, timeout=10)) as db, db:
+            db.execute('CREATE TABLE IF NOT EXISTS replies (key TEXT PRIMARY KEY, body TEXT, checksum TEXT)')
+            if response is not None:
+                body = response.model_dump_json()
+                db.execute('INSERT OR REPLACE INTO replies VALUES (?,?,?)',
+                           (key, body, sha256(body.encode()).hexdigest()))
+                return None
+            row = db.execute('SELECT body, checksum FROM replies WHERE key=?', (key,)).fetchone()
+        if row is None:
+            return None
+        body, digest = row
+        if sha256(body.encode()).hexdigest() != digest:
+            raise ValueError('Gemini cache checksum mismatch')
+        return self.types.GenerateContentResponse.model_validate_json(body)
 
     def generate(self, contents: str, **config):
         from google.genai.errors import APIError
         from httpx import TransportError
 
-        if len(contents.encode('utf-8')) > self.max_input_bytes:
+        prompt_bytes = len(contents.encode('utf-8'))
+        if prompt_bytes > self.max_input_bytes:
             raise ValueError('Gemini input limit exceeded')
+        options = self.types.GenerateContentConfig(
+            max_output_tokens=self.max_output_tokens, temperature=0,
+            thinking_config=self.types.ThinkingConfig(thinking_budget=0),
+            automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
+            **config)
+        serialized = options.model_dump_json()
+        cache_key = sha256(json.dumps((SCHEMA_VERSION, self.model, self.document_sha256, contents,
+                                      serialized, version('google-genai'))).encode()).hexdigest()
+        cached = self.response_cache(cache_key)
+        if cached is not None:
+            self.cache_hits += 1
+            return cached
+        # Budget admission uses a conservative, auditable UTF-8 byte reservation
+        # including the request schema; billable usage comes from API metadata.
+        input_budget = prompt_bytes + len(serialized.encode('utf-8'))
         for attempt in range(self.retries + 1):
             if self.requests >= self.max_requests:
                 raise BudgetExceeded('Gemini request budget exhausted')
+            if (self.input_reserved + input_budget > self.total_input_budget
+                    or self.output_reserved + self.max_output_tokens > self.total_output_budget):
+                raise BudgetExceeded('Gemini token reservation exhausted')
+            self.input_reserved += input_budget
+            self.output_reserved += self.max_output_tokens
             time.sleep(max(0, self.not_before - time.monotonic()))
             self.requests += 1
             self.not_before = time.monotonic() + self.delay
             try:
-                response = self.client.models.generate_content(
-                    model=self.model, contents=contents,
-                    config=self.types.GenerateContentConfig(
-                        max_output_tokens=self.max_output_tokens, temperature=0,
-                        thinking_config=self.types.ThinkingConfig(thinking_budget=0),
-                        automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
-                        **config))
+                response = self.client.models.generate_content(model=self.model, contents=contents, config=options)
                 self.responses_received += 1
                 usage = getattr(response, 'usage_metadata', None)
                 self.input_tokens += getattr(usage, 'prompt_token_count', None) or 0
-                self.output_tokens += getattr(usage, 'candidates_token_count', None) or 0
+                self.output_tokens += ((getattr(usage, 'candidates_token_count', None) or 0)
+                                       + (getattr(usage, 'thoughts_token_count', None) or 0))
                 resolved = getattr(response, 'model_version', None)
                 if resolved:
                     self.resolved_models.add(resolved)
+                self.response_cache(cache_key, response)
                 return response
             except (APIError, TransportError) as exc:
                 if attempt == self.retries or (
@@ -501,7 +560,7 @@ def research(selected: list[str], filings: dict[str, Filing], agent: Gemini | No
             entry['status'] = 'ISSUER_NAME_NOT_PROVIDED'
             continue
         requests_needed = 2 if passage_index is None else 1
-        if agent and agent.max_requests - agent.requests < requests_needed:
+        if agent and not getattr(agent, 'cache_path', None) and agent.max_requests - agent.requests < requests_needed:
             entry['status'] = 'REQUEST_BUDGET_EXHAUSTED'
             continue
 
@@ -509,6 +568,8 @@ def research(selected: list[str], filings: dict[str, Filing], agent: Gemini | No
         try:
             body, kind = source_bytes(filing, replay_dir)
             digest = sha256(body).hexdigest()
+            if isinstance(agent, Gemini):
+                agent.document_sha256 = digest
             entry.update(document_sha256=digest, document_bytes=len(body), content_type=kind,
                          document_origin='PINNED_SNAPSHOT' if replay_dir else 'APPROVED_PUBLIC_URL',
                          accessed_at_utc=datetime.now(timezone.utc).isoformat())
@@ -595,7 +656,12 @@ def research(selected: list[str], filings: dict[str, Filing], agent: Gemini | No
             entry.update(status='SOURCE_ACCESS_FAILED', detail=str(exc))
         except Exception as exc:
             # Provider exception messages can contain URL credentials or provider payloads.
-            entry.update(status=f'{stage}_FAILED', error_type=type(exc).__name__)
+            kind = type(exc).__name__
+            entry.update(status='NOT_TESTED_NETWORK_BLOCKED' if kind == 'ProxyError' else f'{stage}_FAILED',
+                         error_type=kind)
+            code = getattr(exc, 'code', None)
+            if type(code) is int:
+                entry['provider_status'] = code
     report['gemini_requests'] = agent.requests if agent else 0
     report['gemini_resolved_models'] = sorted(agent.resolved_models) if agent else []
     return report

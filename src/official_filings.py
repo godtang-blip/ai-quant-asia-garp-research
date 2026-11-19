@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from .edinet_filings import EDINETError, fetch_edinet
+from .edinet_filings import API, EDINETError, fetch_edinet, parse_xbrl
 from .filing_evidence import SOURCES, VENUE_SUFFIXES, read_export
 from .filing_statements import StatementError, parse_statement
 from .gemini_filing import is_public_https
@@ -122,7 +122,7 @@ def store_original(source_dir, digest, raw):
                 raise SourceUnavailable('EXISTING_SOURCE_HASH_MISMATCH')
 
 
-def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, keys):
+def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, keys, *, replay_dir=None):
     """Return parsed observations and one measurable outcome per scheduled filing."""
     planned = [(row, False) for row in read_export(native_path)]
     planned += [(row, True) for row in read_export(dart_path)]
@@ -142,13 +142,36 @@ def acquire_sources(native_path, dart_path, source_dir, cutoff, budget, delay, k
                 seen.add(identity)
                 key_name = 'DART_API_KEY' if dart else 'EDINET_API_KEY' if venue == 'JPX' else None
                 key = keys.get(key_name, '')
-                if key_name and not key:
+                if key_name and not key and not (replay_dir and not dart):
                     attempt['reason'] = key_name + '_MISSING'
                     continue
                 if used >= budget:
                     attempt['reason'] = 'FILING_BUDGET_EXHAUSTED'
                     continue
                 filing = None if dart else FilingRequest.from_row(row, cutoff)
+                if replay_dir and not dart:
+                    if not filing.expected_sha256:
+                        raise SourceUnavailable('REPLAY_EXPECTED_SHA256_REQUIRED')
+                    with (replay_dir / filing.expected_sha256).open('rb') as stream:
+                        raw = stream.read(MAX_BYTES + 1)
+                    if len(raw) > MAX_BYTES or sha256(raw).hexdigest() != filing.expected_sha256:
+                        raise SourceUnavailable('REPLAY_ORIGINAL_CHECKSUM_MISMATCH')
+                    if venue == 'JPX':
+                        if not re.fullmatch(r'S[0-9A-Z]{7}', filing.document_id):
+                            raise SourceUnavailable('REPLAY_EDINET_DOCUMENT_ID_REQUIRED')
+                        url = f'{API}/{filing.document_id}?type=1'
+                        extracted = parse_xbrl(raw, filing)
+                    else:
+                        url = filing.source_url
+                        kind = 'application/pdf' if raw.startswith(b'%PDF-') else 'text/html'
+                        extracted = parse_statement(raw, kind, filing)
+                    store_original(source_dir, filing.expected_sha256, raw)
+                    rows.extend(dict(filing.provenance(url, filing.expected_sha256), **item,
+                                     acquisition='OFFICIAL_REPLAY') for item in extracted)
+                    used += 1
+                    attempt.update(status='REPLAY_PARSED' if extracted else 'REPLAY_NO_SUPPORTED_STATEMENT_ROWS',
+                                   replay_observations=len(extracted), source_sha256=filing.expected_sha256)
+                    continue
                 if used:
                     time.sleep(delay)
                 used += 1
@@ -197,11 +220,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--requests', required=True, type=Path)
     parser.add_argument('--source-dir', required=True, type=Path)
+    parser.add_argument('--replay-dir', type=Path)
     parser.add_argument('--budget', type=int, choices=range(1, 11), default=5)
     parser.add_argument('--asof-date', type=date.fromisoformat, default=date.today())
     args = parser.parse_args()
     rows, attempts = acquire_sources(args.requests, None, args.source_dir, args.asof_date, args.budget, 1,
-                                     {'EDINET_API_KEY': os.environ.get('EDINET_API_KEY', '')})
+                                     {'EDINET_API_KEY': os.environ.get('EDINET_API_KEY', '')}, replay_dir=args.replay_dir)
     print(json.dumps({'attempts': attempts, 'parsed_rows': len(rows)}, indent=2, ensure_ascii=False))
 
 
