@@ -1,0 +1,136 @@
+{
+  "artifact_type": "DERIVED_EXCERPT",
+  "dates": {
+    "screening_generated_utc": "2026-11-19T08:40:34.760288+00:00",
+    "case_report_as_of": "2026-11-20"
+  },
+  "scope": "Case selection from supplied snapshot replay; separate from Actions discovery-only run 44370844839.",
+  "transformation": [
+    "Allowlist metadata keys; compute successful stored replays as fetched_n minus fetch_failures_n.",
+    "Project two rows in original shortlist order into identity, rank, score, coverage and discovery status.",
+    "Read workbook cached inputs and independently recompute its three conditional values before rounding to whole KRW.",
+    "Hash original bytes before excerpting. The report PDF is unchanged."
+  ],
+  "inputs": [
+    {
+      "path_in_handoff": "reference_inputs/research/02_research_shortlist.csv",
+      "sha256": "96b97015bf866f2a83d3c736ded523ecbfaa874be5c86bbe8f0e4a7d413518c5"
+    },
+    {
+      "path_in_handoff": "reference_inputs/research/03_research_report.md",
+      "sha256": "786c5d388c84984f992e790d5bfabdf9e9d4947d08de0604fa79fa3acd235b4b"
+    },
+    {
+      "path_in_handoff": "reference_inputs/research/04_run_metadata.json",
+      "sha256": "42c72cd933603dbf3ba953f5c373809a5e5d9770f0aa8ce5c0be37d1375ad5fb"
+    },
+    {
+      "path_in_handoff": "DB_HiTek_Equity_Research_Report_FINAL_20261120.pdf",
+      "sha256": "373312741adb0345585e9166623886f7cf1e1eceb0e48678e5f5075ce0b23343"
+    },
+    {
+      "path_in_handoff": "DB_HiTek_DCF_v15_Conditional_Valuation_Bridge.xlsx",
+      "sha256": "5519b3d155c69df859b9c06743161a97782ede272dc6bb14751bbc5915852f00"
+    }
+  ],
+  "screening": {
+    "metadata": {
+      "generated_utc": "2026-11-19T08:40:34.760288+00:00",
+      "pipeline_revision": "0.3.1",
+      "data_mode": "SNAPSHOT_REPLAY_NOT_LIVE",
+      "discovery_mode": "off",
+      "curated_n": 61,
+      "new_discovered_n": 16610,
+      "total_universe_watchlist_n": 16671,
+      "fetched_n": 16671,
+      "fetch_failures_n": 16171,
+      "rankable_n": 439,
+      "shortlist_n": 10,
+      "memo_verified_ready_n": 0,
+      "filing_verification": "NOT_PERFORMED_ON_PRIMARY_STATEMENTS",
+      "expected_return_backtest": "NOT_PERFORMED",
+      "actual_trades": "NONE",
+      "score_calibration": "NOT_PERFORMED",
+      "evidence_mode": "off",
+      "market_counts_selected": {
+        "China": 5620,
+        "Japan": 3686,
+        "Hong Kong": 2781,
+        "Korea": 2592,
+        "Taiwan": 1992
+      }
+    },
+    "successful_snapshot_rows_derived": 500,
+    "shortlist_csv_rows": 10,
+    "report_preview_rows": 15,
+    "top_two": [
+      {
+        "rank_from_row_order": 1,
+        "ticker": "2330.TW",
+        "company": "TSMC",
+        "discovery_source": "CURATED_LIST",
+        "is_new_discovery": false,
+        "research_score_100": 80.55,
+        "score_coverage": 0.9
+      },
+      {
+        "rank_from_row_order": 2,
+        "ticker": "000990.KS",
+        "company": "DB HiTek",
+        "discovery_source": "CURATED_LIST",
+        "is_new_discovery": false,
+        "research_score_100": 77.15,
+        "score_coverage": 0.9
+      }
+    ],
+    "exact_run_id": null,
+    "exact_code_sha": null
+  },
+  "conditional_dcf": {
+    "workbook_input_range": "Foundry_DCF!C20:G20 and v15_Decision_Bridge!B5:B15, B17:O19",
+    "cash_flow_units": "KRW 100 million",
+    "fcff_2027_to_2031": [
+      1232.9432035714285,
+      2878.514388571428,
+      3251.6246324142858,
+      3361.183719311213,
+      3468.024715100881
+    ],
+    "terminal_nopat_2032": 2735.188737725302,
+    "terminal_growth": 0.02,
+    "parent_liquid_net_financial_assets_at_2026_09_30": 4574.159644990001,
+    "assumed_increase_from_subsidiaries": 0,
+    "shares_excluding_treasury_at_2026_09_30": 42626920,
+    "valuation_assumption_date": "2026-12-31",
+    "report_price_date": "2026-11-20",
+    "closing_price_krw_as_cited_by_report": 68500,
+    "independent_quote_recheck": "NOT_PERFORMED_BLOCKED_SOURCE_ACCESS",
+    "scenarios": [
+      {
+        "scenario": "bear",
+        "wacc": 0.125,
+        "ronic": 0.086,
+        "foundry_ev_krw_100m": 20770.742752910843,
+        "illustrative_partial_krw_per_share_rounded": 59458,
+        "difference_to_reported_close_pct_rounded": -13.2
+      },
+      {
+        "scenario": "base",
+        "wacc": 0.1164,
+        "ronic": 0.15,
+        "foundry_ev_krw_100m": 24093.99175784602,
+        "illustrative_partial_krw_per_share_rounded": 67254,
+        "difference_to_reported_close_pct_rounded": -1.8
+      },
+      {
+        "scenario": "bull",
+        "wacc": 0.108,
+        "ronic": 0.2,
+        "foundry_ev_krw_100m": 26906.11584764564,
+        "illustrative_partial_krw_per_share_rounded": 73851,
+        "difference_to_reported_close_pct_rounded": 7.8
+      }
+    ],
+    "interpretation": "Partial EV-to-equity illustration; no independent WACC or complete SOTP."
+  }
+}

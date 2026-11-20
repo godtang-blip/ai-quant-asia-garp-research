@@ -1,5 +1,22 @@
 # Five-market discovery milestone
 
+## Observed listing-only run · November 19, 2026 KST
+
+[GitHub Actions run #44370844839](https://github.com/godtang-blip/ai-quant-asia-garp-research/actions/runs/44370844839) collected **16,629 unique security codes** in `discovery_only` mode after PR #3. The table is preserved from the run record on the default branch at [`08f9b57`](https://github.com/godtang-blip/ai-quant-asia-garp-research/blob/08f9b57ea572c4f772bab9fb3e0a67a817bb1b9e/README.md). The historical artifact was unavailable for independent reinspection during this edit. The Actions job was not rerun.
+
+| Market | Codes | Successful listing routes recorded |
+|---|---:|---|
+| Korea | 2,592 | KIND plus retained curated entries |
+| Japan | 3,686 | JPX |
+| Mainland China | 5,579 | SSE Main Board and STAR plus third-party QuantSonar for SZSE and BSE |
+| Hong Kong | 2,781 | HKEX workbook |
+| Taiwan | 1,991 | TWSE and TPEx |
+| **Total** | **16,629** | |
+
+The run collected listing codes. It ran no financial fetch, GARP scoring or return backtest. Multiple share classes or counters can map to the same issuer. Direct SZSE/BSE routes failed and exchange-wide completeness remains undetermined. The separate [DB HiTek replay](../case-studies/db-hitek/screening_evidence.md) used a different watchlist and produced financial scores.
+
+## Earlier cloud probe and proposed source work
+
 **Product status: unresolved.** The prior run figures below were supplied by the user. Its row-level artifacts were unavailable for this review. A focused discovery-only run in this cloud attempted official sources and a one-row Yahoo screener request per market. The proxy returned CONNECT 403 on direct publisher probes. Yahoo could not establish a session. KRX credentials were absent and no publisher exports were supplied. The current run returned zero external securities and retained the 61 curated entries.
 
 | Market | Prior analyzed | Curated carried into current probe | New live listings in current probe |
