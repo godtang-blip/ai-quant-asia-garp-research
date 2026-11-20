@@ -8,10 +8,8 @@ An independent, AI-assisted equity research engine that ranks companies for inve
 
 ## Observed runs
 
-| Run | Observed result | Validation scope |
-|---|---|---|
-| **A · Live listing collection** | [Actions #44370844839](https://github.com/godtang-blip/ai-quant-asia-garp-research/actions/runs/44370844839), November 19, 2026 KST. **16,629 unique security codes** across five markets. | `discovery_only`. Listing sources and failures were recorded. Financial retrieval, scoring, and return validation were outside this run. [Market breakdown](docs/FIVE_MARKET_DISCOVERY_MILESTONE.md) |
-| **B · Financial snapshot replay** | November 19, 2026. **16,671** watchlist codes, **500** usable financial records, **439** scored. **TSMC 1st (80.55)**, **DB HiTek 2nd (77.15)**. | `SNAPSHOT_REPLAY_NOT_LIVE`, pipeline revision `0.3.1`. The run recorded zero verified investment memos and no primary-statement verification or return backtest. [Source hashes and derivation](case-studies/db-hitek/screening_evidence.md#screening-record) |
+- **A · Live listing collection.** Actions #44370844839 collected **16,629 unique security codes** across five markets on November 19, 2026 KST. The `discovery_only` run recorded listing sources and failures. Financial retrieval, scoring and return validation were outside its scope. [Actions run](https://github.com/godtang-blip/ai-quant-asia-garp-research/actions/runs/44370844839) · [Market breakdown](docs/FIVE_MARKET_DISCOVERY_MILESTONE.md)
+- **B · Financial snapshot replay.** On November 19, 2026, the watchlist contained **16,671 codes**, with **500 usable financial records** and **439 scores**. **TSMC ranked 1st (80.55) and DB HiTek 2nd (77.15).** Mode was `SNAPSHOT_REPLAY_NOT_LIVE`, revision `0.3.1`. The run recorded zero verified investment memos and no primary-statement verification or return backtest. [Source hashes and derivation](case-studies/db-hitek/screening_evidence.md#screening-record)
 
 ## DB HiTek case
 
